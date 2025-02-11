@@ -60,6 +60,9 @@ music2latent supports more advanced usage, including GPU memory management contr
 
 ## Training
 
+Make sure your environment is set up with the dependencies listed in `requirements.txt`.
+Music2Latent relies on `numpy`, `soundfile`, `huggingface_hub`, `torch>=2.5.0`, `laion-clap`, `torchaudio`, `librosa`, `scipy`.
+
 ### 1. Configuration
 
 Music2Latent uses a Python-based configuration system.  Instead of separate `.yaml` or `.json` files, you create a Python file (e.g., `config.py`) that *overrides* default settings.
