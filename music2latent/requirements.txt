@@ -1,4 +1,8 @@
 numpy
 soundfile
 huggingface_hub
-torch>=2.0.1
+torch>=2.5.0
+laion-clap
+librosa
+torchaudio
+scipy

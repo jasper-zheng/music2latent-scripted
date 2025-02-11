@@ -161,3 +161,6 @@ cython_debug/
 
 *.pt
 music2latent/models/
+tmp/
+fad_stats/
+checkpoints/

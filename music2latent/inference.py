@@ -2,7 +2,8 @@ import soundfile as sf
 import torch
 import numpy as np
 
-from .hparams import *
+from .ema import ExponentialMovingAverage
+from .hparams import hparams
 from .hparams_inference import *
 from .utils import *
 from .models import *
@@ -24,6 +25,14 @@ class EncoderDecoder:
     def get_models(self):
         gen = UNet().to(self.device)
         checkpoint = torch.load(self.load_path_inference, map_location=self.device)
+        gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
+        # if checkpoint['ema_state_dict'] exists, init ema model and load ema_state_dict
+        if 'ema_state_dict' in checkpoint:
+            ema = ExponentialMovingAverage(gen.parameters(), decay=hparams.ema_momentum)
+            ema.load_state_dict(checkpoint['ema_state_dict'])
+            ema.copy_to()
+            with ema.average_parameters():
+                checkpoint['gen_state_dict'] = self.gen.state_dict()
         gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
         self.gen = gen
 
@@ -72,9 +81,9 @@ class EncoderDecoder:
 #   decoded_spectrograms with shape [audio_channels/batch_size, data_channels, hop*2, length*downscaling_factor]
 def decode_to_representation(model, latents, diffusion_steps=1, device='cuda'):
     num_samples = latents.shape[0]
-    downscaling_factor = 2**freq_downsample_list.count(0)
+    downscaling_factor = 2**hparams.freq_downsample_list.count(0)
     sample_length = int(latents.shape[-1]*downscaling_factor)
-    initial_noise = torch.randn((num_samples, data_channels, hop*2, sample_length)).to(device)*sigma_max
+    initial_noise = torch.randn((num_samples, hparams.data_channels, hparams.hop*2, sample_length)).to(device)*hparams.sigma_max
     decoded_spectrograms = reverse_diffusion(model, initial_noise, diffusion_steps, latents=latents)
     return decoded_spectrograms
 
@@ -92,7 +101,7 @@ def decode_to_representation(model, latents, diffusion_steps=1, device='cuda'):
 def encode_audio_inference(audio_path, trainer, max_waveform_length_encode, max_batch_size_encode, device='cuda', extract_features=False):
     trainer.gen = trainer.gen.to(device)
     trainer.gen.eval()
-    downscaling_factor = 2**freq_downsample_list.count(0)
+    downscaling_factor = 2**hparams.freq_downsample_list.count(0)
     if is_path(audio_path):
         audio, sr = sf.read(audio_path, dtype='float32', always_2d=True)
         audio = np.transpose(audio, [1,0])
@@ -114,12 +123,12 @@ def encode_audio_inference(audio_path, trainer, max_waveform_length_encode, max_
             audio = audio.to(device)
 
     # EXPERIMENTAL: crop audio to be divisible by downscaling_factor
-    cropped_length = ((((audio.shape[-1]-3*hop)//hop)//downscaling_factor)*hop*downscaling_factor)+3*hop
+    cropped_length = ((((audio.shape[-1]-3*hparams.hop)//hparams.hop)//downscaling_factor)*hparams.hop*downscaling_factor)+3*hparams.hop
     audio = audio[:,:cropped_length]
 
     repr_encoder = to_representation_encoder(audio)
     sample_length = repr_encoder.shape[-1]
-    max_sample_length = (int(max_waveform_length_encode/hop)//downscaling_factor)*downscaling_factor
+    max_sample_length = (int(max_waveform_length_encode/hparams.hop)//downscaling_factor)*downscaling_factor
 
     # if repr_encoder is longer than max_sample_length, chunk it into max_sample_length chunks, the last chunk will be zero-padded, then concatenate the chunks into the batch dimension (before encoding them)
     pad_size = 0
@@ -137,12 +146,12 @@ def encode_audio_inference(audio_path, trainer, max_waveform_length_encode, max_
         repr_encoder_ls = torch.split(repr_encoder, max_batch_size, dim=0)
         latent_ls = []
         for i in range(len(repr_encoder_ls)):
-            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=mixed_precision): # disable float16 for encoding (can cause nans)
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=hparams.mixed_precision): # disable float16 for encoding (can cause nans)
                 latent = trainer.gen.encoder(repr_encoder_ls[i], extract_features=extract_features)
             latent_ls.append(latent)
         latent = torch.cat(latent_ls, dim=0)
     else:
-        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=mixed_precision): # disable float16 for encoding (can cause nans)
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=hparams.mixed_precision): # disable float16 for encoding (can cause nans)
             latent = trainer.gen.encoder(repr_encoder, extract_features=extract_features)
     # split samples
     if latent.shape[0]>1:
@@ -168,7 +177,7 @@ def encode_audio_inference(audio_path, trainer, max_waveform_length_encode, max_
 def decode_latent_inference(latent, trainer, max_waveform_length_decode, max_batch_size_decode, diffusion_steps=1, device='cuda'):
     trainer.gen = trainer.gen.to(device)
     trainer.gen.eval()
-    downscaling_factor = 2**freq_downsample_list.count(0)
+    downscaling_factor = 2**hparams.freq_downsample_list.count(0)
     latent = latent*sigma_rescale
     # check if latent is numpy array, then convert to tensor
     if isinstance(latent, np.ndarray):
@@ -181,7 +190,7 @@ def decode_latent_inference(latent, trainer, max_waveform_length_decode, max_bat
         latent = torch.unsqueeze(latent, 0)
     audio_channels = latent.shape[0]
     latent_length = latent.shape[-1]
-    max_latent_length = int(max_waveform_length_decode/hop)//downscaling_factor
+    max_latent_length = int(max_waveform_length_decode/hparams.hop)//downscaling_factor
 
     # if latent is longer than max_latent_length, chunk it into max_latent_length chunks, the last chunk will be zero-padded, then concatenate the chunks into the batch dimension (before decoding them)
     pad_size = 0

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='music2latent',
-    version='0.1.6',
+    version='0.1.7',
     packages=find_packages(), 
     description='Encode and decode audio samples to/from compressed representations!',
     author='Sony Computer Science Laboratories Paris',
@@ -13,7 +13,11 @@ setup(
         'numpy',
         'soundfile',
         'huggingface_hub',
-        'torch',
+        'torch>=2.5.0',
+        'librosa',
+        'torchaudio',
+        'laion-clap',
+        'scipy'
     ],
     license='CC BY-NC 4.0',
     url='https://github.com/SonyCSLParis/music2latent',

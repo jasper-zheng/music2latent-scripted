@@ -1,8 +1,11 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+import torchaudio
+import librosa
+import matplotlib.pyplot as plt
 
-from .hparams import *
+from .hparams import hparams
 
 
 def wv2spec(wv, hop_size=256, fac=4):
@@ -19,15 +22,15 @@ def spec2wv(S,P, hop_size=256, fac=4):
     return istft(SP, fac=fac, hop_size=hop_size, device=SP.device)
 
 def denormalize_realimag(x):
-    x = x/beta_rescale
-    return torch.sign(x)*(x.abs()**(1./alpha_rescale))
+    x = x/hparams.beta_rescale
+    return torch.sign(x)*(x.abs()**(1./hparams.alpha_rescale))
 
 def normalize_complex(x):
-    return beta_rescale*(x.abs()**alpha_rescale).to(torch.complex64)*torch.exp(1j*torch.angle(x).to(torch.complex64))
+    return hparams.beta_rescale*(x.abs()**hparams.alpha_rescale).to(torch.complex64)*torch.exp(1j*torch.angle(x).to(torch.complex64))
 
 def denormalize_complex(x):
-    x = x/beta_rescale
-    return (x.abs()**(1./alpha_rescale)).to(torch.complex64)*torch.exp(1j*torch.angle(x).to(torch.complex64))
+    x = x/hparams.beta_rescale
+    return (x.abs()**(1./hparams.alpha_rescale)).to(torch.complex64)*torch.exp(1j*torch.angle(x).to(torch.complex64))
 
 def wv2complex(wv, hop_size=256, fac=4):
     X = stft(wv, hop_size=hop_size, fac=fac, device=wv.device)
@@ -46,13 +49,13 @@ def realimag2wv(x, hop_size=256, fac=4):
     return istft(X, fac=fac, hop_size=hop_size, device=X.device).clamp(-1.,1.)
 
 def to_representation_encoder(x):
-    return wv2realimag(x, hop)
+    return wv2realimag(x, hparams.hop)
 
 def to_representation(x):
-    return wv2realimag(x, hop)
+    return wv2realimag(x, hparams.hop)
 
 def to_waveform(x):
-    return realimag2wv(x, hop)
+    return realimag2wv(x, hparams.hop)
 
 def overlap_and_add(signal, frame_step):
 
@@ -155,3 +158,53 @@ def power2db(power, ref_value=1.0, amin=1e-10):
     log_spec = 10.0 * torch.log10(torch.maximum(torch.tensor(amin), power))
     log_spec -= 10.0 * torch.log10(torch.maximum(torch.tensor(amin), torch.tensor(ref_value)))
     return log_spec
+
+def create_melmat(hop=256, mel_bins=256, device=None):
+    if device is None:
+        if torch.cuda.is_available():
+            device = 'cuda'
+        else:
+            device = 'cpu'
+    melmat_pt = torchaudio.functional.melscale_fbanks(int((4*hop) // 2 + 1), n_mels=mel_bins, f_min=0.0, f_max=hparams.sample_rate / 2.0, sample_rate=hparams.sample_rate)
+    mel_f = torch.from_numpy(librosa.mel_frequencies(n_mels=mel_bins + 2, fmin=0., fmax=hparams.sample_rate//2))
+    enorm = (2.0 / (mel_f[2 : mel_bins + 2] - mel_f[:mel_bins])).unsqueeze(0).to(torch.float32)
+    melmat_pt = torch.mul(melmat_pt, enorm)
+    melmat_pt = torch.div(melmat_pt, torch.sum(melmat_pt, dim=0))
+    melmat_pt[torch.isnan(melmat_pt)] = 0
+    return melmat_pt.to(device)
+
+def wv2mel(x):
+    melmat = create_melmat()
+    melmat = melmat.to(x.device)
+    return torch.tensordot(wv2spec(x), melmat, dims=([-2],[0])).permute(0,2,1)
+
+def plot_audio(wv):
+
+    # wv has shape [batch_size, samples]
+
+    spec = wv2mel(wv)
+    fig, axs = plt.subplots(nrows=spec.shape[0], ncols=1)
+    for ind in range(spec.shape[0]):
+        axs[ind].imshow(np.flip(spec.cpu().numpy(), -2), cmap=None)
+        axs[ind].axis('off')
+        axs[ind].set_title('Mel-Spectrogram')
+    return fig
+
+def plot_audio_compare(wv1,wv2):
+
+    spec1 = []
+    spec2 = []
+    for w1,w2 in zip(wv1,wv2):
+        spec1.append(wv2mel(w1.unsqueeze(0)).squeeze(0)[..., :1024])
+        spec2.append(wv2mel(w2.unsqueeze(0)).squeeze(0)[..., :1024])
+
+    fig, axs = plt.subplots(nrows=len(spec1), ncols=2, figsize=(5*len(spec1),10))
+
+    for ind in range(len(spec1)):
+
+        axs[ind][0].imshow(np.flip(spec1[ind].cpu().numpy(), -2), cmap=None)
+        axs[ind][0].axis('off')
+
+        axs[ind][1].imshow(np.flip(spec2[ind].cpu().numpy(), -2), cmap=None)
+        axs[ind][1].axis('off')
+    return fig

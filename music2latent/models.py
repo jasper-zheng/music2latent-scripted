@@ -1,3 +1,4 @@
+from .hparams import hparams
 from .utils import *
 from .audio import *
 
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 
 
 def zero_init(module):
-    if init_as_zero:
+    if hparams.init_as_zero:
         for p in module.parameters():
             p.detach().zero_()
     return module
@@ -211,7 +212,7 @@ class ResBlock(nn.Module):
             self.activation = nn.SiLU()
         if cond_channels is not None:
             self.proj_emb = zero_init(nn.Linear(cond_channels, out_channels))
-        self.dropout = nn.Dropout(dropout_rate)
+        self.dropout = nn.Dropout(hparams.dropout_rate)
         if attention:
             self.att = Attention(out_channels, heads, use_2d=use_2d)
             
@@ -247,7 +248,7 @@ class ResBlock(nn.Module):
         if self.normalize:
             x = self.norm2(x)
         x = self.activation(x)
-        if x.shape[-1]<=min_res_dropout:
+        if x.shape[-1]<=hparams.min_res_dropout:
             x = self.dropout(x)
         x = self.conv2(x)
         y = self.res_conv(y)
@@ -288,46 +289,46 @@ class Encoder(nn.Module):
     def __init__(self):
         super(Encoder, self).__init__()
         
-        layers_list = layers_list_encoder
-        attention_list = attention_list_encoder
+        layers_list = hparams.layers_list_encoder
+        attention_list = hparams.attention_list_encoder
         self.layers_list = layers_list
-        self.multipliers_list = multipliers_list
-        input_channels = base_channels*multipliers_list[0]
+        self.multipliers_list = hparams.multipliers_list
+        input_channels = hparams.base_channels*hparams.multipliers_list[0]
         Conv = nn.Conv2d
-        self.gain = FreqGain(freq_dim=hop*2)
+        self.gain = FreqGain(freq_dim=hparams.hop*2)
 
-        channels = data_channels
+        channels = hparams.data_channels
         self.conv_inp = Conv(channels, input_channels, kernel_size=3, stride=1, padding=1)
 
-        self.freq_dim = (hop*2)//(4**freq_downsample_list.count(1))
-        self.freq_dim = self.freq_dim//(2**freq_downsample_list.count(0))
+        self.freq_dim = (hparams.hop*2)//(4**hparams.freq_downsample_list.count(1))
+        self.freq_dim = self.freq_dim//(2**hparams.freq_downsample_list.count(0))
         
         # DOWNSAMPLING
         down_layers = []
-        for i, (num_layers,multiplier) in enumerate(zip(layers_list,multipliers_list)):
-            output_channels = base_channels*multiplier
+        for i, (num_layers,multiplier) in enumerate(zip(layers_list,hparams.multipliers_list)):
+            output_channels = hparams.base_channels*multiplier
             for num in range(num_layers):
-                down_layers.append(ResBlock(input_channels, output_channels, normalize=normalization, attention=attention_list[i]==1, heads=heads, use_2d=True))
+                down_layers.append(ResBlock(input_channels, output_channels, normalize=hparams.normalization, attention=attention_list[i]==1, heads=hparams.heads, use_2d=True))
                 input_channels = output_channels
             if i!=(len(layers_list)-1):
-                if freq_downsample_list[i]==1:
-                    down_layers.append(DownsampleFreqConv(input_channels, normalize=pre_normalize_downsampling_encoder))
+                if hparams.freq_downsample_list[i]==1:
+                    down_layers.append(DownsampleFreqConv(input_channels, normalize=hparams.pre_normalize_downsampling_encoder))
                 else:
-                    down_layers.append(DownsampleConv(input_channels, use_2d=True, normalize=pre_normalize_downsampling_encoder))
+                    down_layers.append(DownsampleConv(input_channels, use_2d=True, normalize=hparams.pre_normalize_downsampling_encoder))
 
-        if pre_normalize_2d_to_1d:
+        if hparams.pre_normalize_2d_to_1d:
             self.prenorm_1d_to_2d = nn.GroupNorm(min(input_channels//4, 32), input_channels)
 
         bottleneck_layers = []
-        output_channels = bottleneck_base_channels
+        output_channels = hparams.bottleneck_base_channels
         bottleneck_layers.append(nn.Conv1d(input_channels*self.freq_dim, output_channels, kernel_size=1, stride=1, padding='same'))
-        for i in range(num_bottleneck_layers):
-            bottleneck_layers.append(ResBlock(output_channels, output_channels, normalize=normalization, use_2d=False))
+        for i in range(hparams.num_bottleneck_layers):
+            bottleneck_layers.append(ResBlock(output_channels, output_channels, normalize=hparams.normalization, use_2d=False))
         self.bottleneck_layers = nn.ModuleList(bottleneck_layers)
 
         self.norm_out = nn.GroupNorm(min(output_channels//4, 32), output_channels)
         self.activation_out = nn.SiLU()
-        self.conv_out = nn.Conv1d(output_channels, bottleneck_channels, kernel_size=1, stride=1, padding='same')
+        self.conv_out = nn.Conv1d(output_channels, hparams.bottleneck_channels, kernel_size=1, stride=1, padding='same')
         self.activation_bottleneck = nn.Tanh()
             
         self.down_layers = nn.ModuleList(down_layers)
@@ -336,7 +337,7 @@ class Encoder(nn.Module):
     def forward(self, x, extract_features=False):
 
         x = self.conv_inp(x)
-        if frequency_scaling:
+        if hparams.frequency_scaling:
             x = self.gain(x)
         
         # DOWNSAMPLING
@@ -349,7 +350,7 @@ class Encoder(nn.Module):
                 x = self.down_layers[k](x)
                 k = k+1
 
-        if pre_normalize_2d_to_1d:
+        if hparams.pre_normalize_2d_to_1d:
             x = self.prenorm_1d_to_2d(x)
 
         x = x.reshape(x.size(0), x.size(1) * x.size(2), x.size(3))
@@ -371,34 +372,34 @@ class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
         
-        layers_list = layers_list_encoder
-        attention_list = attention_list_encoder
-        self.layers_list = layers_list_encoder
-        self.multipliers_list = multipliers_list
-        input_channels = base_channels*multipliers_list[-1]
+        layers_list = hparams.layers_list_encoder
+        attention_list = hparams.attention_list_encoder
+        self.layers_list = hparams.layers_list_encoder
+        self.multipliers_list = hparams.multipliers_list
+        input_channels = hparams.base_channels*hparams.multipliers_list[-1]
 
-        output_channels = bottleneck_base_channels
-        self.conv_inp = nn.Conv1d(bottleneck_channels, output_channels, kernel_size=1, stride=1, padding='same')
+        output_channels = hparams.bottleneck_base_channels
+        self.conv_inp = nn.Conv1d(hparams.bottleneck_channels, output_channels, kernel_size=1, stride=1, padding='same')
         
-        self.freq_dim = (hop*2)//(4**freq_downsample_list.count(1))
-        self.freq_dim = self.freq_dim//(2**freq_downsample_list.count(0))
+        self.freq_dim = (hparams.hop*2)//(4**hparams.freq_downsample_list.count(1))
+        self.freq_dim = self.freq_dim//(2**hparams.freq_downsample_list.count(0))
 
         bottleneck_layers = []
-        for i in range(num_bottleneck_layers):
-            bottleneck_layers.append(ResBlock(output_channels, output_channels, cond_channels, normalize=normalization, use_2d=False))
+        for i in range(hparams.num_bottleneck_layers):
+            bottleneck_layers.append(ResBlock(output_channels, output_channels, hparams.cond_channels, normalize=hparams.normalization, use_2d=False))
 
         self.conv_out_bottleneck = nn.Conv1d(output_channels, input_channels*self.freq_dim, kernel_size=1, stride=1, padding='same')
         self.bottleneck_layers = nn.ModuleList(bottleneck_layers)
 
         # UPSAMPLING
-        multipliers_list_upsampling = list(reversed(multipliers_list))[1:]+list(reversed(multipliers_list))[:1]
-        freq_upsample_list = list(reversed(freq_downsample_list))
+        multipliers_list_upsampling = list(reversed(hparams.multipliers_list))[1:]+list(reversed(hparams.multipliers_list))[:1]
+        freq_upsample_list = list(reversed(hparams.freq_downsample_list))
         up_layers = []      
         for i, (num_layers,multiplier) in enumerate(zip(reversed(layers_list),multipliers_list_upsampling)):
             for num in range(num_layers):
-                up_layers.append(ResBlock(input_channels, input_channels, normalize=normalization, attention=list(reversed(attention_list))[i]==1, heads=heads, use_2d=True))
+                up_layers.append(ResBlock(input_channels, input_channels, normalize=hparams.normalization, attention=list(reversed(attention_list))[i]==1, heads=hparams.heads, use_2d=True))
             if i!=(len(layers_list)-1):
-                output_channels = base_channels*multiplier
+                output_channels = hparams.base_channels*multiplier
                 if freq_upsample_list[i]==1:
                     up_layers.append(UpsampleFreqConv(input_channels, output_channels))
                 else:
@@ -440,51 +441,51 @@ class UNet(nn.Module):
     def __init__(self):
         super(UNet, self).__init__()
         
-        self.layers_list = layers_list
-        self.multipliers_list = multipliers_list
-        input_channels = base_channels*multipliers_list[0]
+        self.layers_list = hparams.layers_list
+        self.multipliers_list = hparams.multipliers_list
+        input_channels = hparams.base_channels*hparams.multipliers_list[0]
         Conv = nn.Conv2d
 
         self.encoder = Encoder()
         self.decoder = Decoder()
 
-        if use_fourier:
-            self.emb = GaussianFourierProjection(embedding_size=cond_channels, scale=fourier_scale)
+        if hparams.use_fourier:
+            self.emb = GaussianFourierProjection(embedding_size=hparams.cond_channels, scale=hparams.fourier_scale)
         else:
-            self.emb = PositionalEmbedding(embedding_size=cond_channels)
+            self.emb = PositionalEmbedding(embedding_size=hparams.cond_channels)
 
-        self.emb_proj = nn.Sequential(nn.Linear(cond_channels, cond_channels), nn.SiLU(), nn.Linear(cond_channels, cond_channels), nn.SiLU())
+        self.emb_proj = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU())
 
-        self.scale_inp = nn.Sequential(nn.Linear(cond_channels, cond_channels), nn.SiLU(), nn.Linear(cond_channels, cond_channels), nn.SiLU(), zero_init(nn.Linear(cond_channels, hop*2)))
-        self.scale_out = nn.Sequential(nn.Linear(cond_channels, cond_channels), nn.SiLU(), nn.Linear(cond_channels, cond_channels), nn.SiLU(), zero_init(nn.Linear(cond_channels, hop*2)))
+        self.scale_inp = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
+        self.scale_out = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
 
-        self.conv_inp = Conv(data_channels, input_channels, kernel_size=3, stride=1, padding=1)
+        self.conv_inp = Conv(hparams.data_channels, input_channels, kernel_size=3, stride=1, padding=1)
         
         # DOWNSAMPLING
         down_layers = []
-        for i, (num_layers,multiplier) in enumerate(zip(layers_list,multipliers_list)):
-            output_channels = base_channels*multiplier
+        for i, (num_layers,multiplier) in enumerate(zip(hparams.layers_list,hparams.multipliers_list)):
+            output_channels = hparams.base_channels*multiplier
             for num in range(num_layers):
                 down_layers.append(Conv(output_channels, output_channels, kernel_size=1, stride=1, padding=0))
-                down_layers.append(ResBlock(output_channels, output_channels, cond_channels, normalize=normalization, attention=attention_list[i]==1, heads=heads, use_2d=True))                
+                down_layers.append(ResBlock(output_channels, output_channels, hparams.cond_channels, normalize=hparams.normalization, attention=hparams.attention_list[i]==1, heads=hparams.heads, use_2d=True))                
                 input_channels = output_channels
-            if i!=(len(layers_list)-1):
-                output_channels = base_channels*multipliers_list[i+1]
-                if freq_downsample_list[i]==1:
+            if i!=(len(hparams.layers_list)-1):
+                output_channels = hparams.base_channels*hparams.multipliers_list[i+1]
+                if hparams.freq_downsample_list[i]==1:
                     down_layers.append(DownsampleFreqConv(input_channels, output_channels))
                 else:
                     down_layers.append(DownsampleConv(input_channels, output_channels, use_2d=True))
 
         # UPSAMPLING
-        multipliers_list_upsampling = list(reversed(multipliers_list))[1:]+list(reversed(multipliers_list))[:1]
-        freq_upsample_list = list(reversed(freq_downsample_list))
+        multipliers_list_upsampling = list(reversed(hparams.multipliers_list))[1:]+list(reversed(hparams.multipliers_list))[:1]
+        freq_upsample_list = list(reversed(hparams.freq_downsample_list))
         up_layers = []      
-        for i, (num_layers,multiplier) in enumerate(zip(reversed(layers_list),multipliers_list_upsampling)):
+        for i, (num_layers,multiplier) in enumerate(zip(reversed(hparams.layers_list),multipliers_list_upsampling)):
             for num in range(num_layers):
                 up_layers.append(Conv(input_channels, input_channels, kernel_size=1, stride=1, padding=0))
-                up_layers.append(ResBlock(input_channels, input_channels, cond_channels, normalize=normalization, attention=list(reversed(attention_list))[i]==1, heads=heads, use_2d=True))
-            if i!=(len(layers_list)-1):
-                output_channels = base_channels*multiplier
+                up_layers.append(ResBlock(input_channels, input_channels, hparams.cond_channels, normalize=hparams.normalization, attention=list(reversed(hparams.attention_list))[i]==1, heads=hparams.heads, use_2d=True))
+            if i!=(len(hparams.layers_list)-1):
+                output_channels = hparams.base_channels*multiplier
                 if freq_upsample_list[i]==1:
                     up_layers.append(UpsampleFreqConv(input_channels, output_channels))
                 else:
@@ -494,16 +495,16 @@ class UNet(nn.Module):
         self.conv_decoded = Conv(input_channels, input_channels, kernel_size=1, stride=1, padding=0)
         self.norm_out = nn.GroupNorm(min(input_channels//4, 32), input_channels)
         self.activation_out = nn.SiLU()
-        self.conv_out = zero_init(Conv(input_channels, data_channels, kernel_size=3, stride=1, padding=1))
+        self.conv_out = zero_init(Conv(input_channels, hparams.data_channels, kernel_size=3, stride=1, padding=1))
             
         self.down_layers = nn.ModuleList(down_layers)
         self.up_layers = nn.ModuleList(up_layers)
 
 
-    def forward(self, latents, x, sigma=None, pyramid_latents=None):
+    def forward_generator(self, latents, x, sigma=None, pyramid_latents=None):
 
         if sigma is None:
-            sigma = sigma_max
+            sigma = hparams.sigma_max
         
         inp = x
         
@@ -527,7 +528,7 @@ class UNet(nn.Module):
             pyramid_latents = self.decoder(latents)
 
         x = self.conv_inp(x)
-        if frequency_scaling:
+        if hparams.frequency_scaling:
             x = (1.+scale_w_inp)*x
         
         skip_list = []
@@ -565,10 +566,18 @@ class UNet(nn.Module):
 
         x = self.norm_out(x)
         x = self.activation_out(x)
-        if frequency_scaling:
+        if hparams.frequency_scaling:
             x = (1.+scale_w_out)*x
         x = self.conv_out(x)
 
         out = c_skip*inp + c_out*x 
 
         return out
+    
+
+    def forward(self, data_encoder, noisy_samples, noisy_samples_plus_one, sigmas_step, sigmas):
+        latents = self.encoder(data_encoder)
+        pyramid_latents = self.decoder(latents)
+        fdata = self.forward_generator(latents, noisy_samples, sigmas_step, pyramid_latents).detach()
+        fdata_plus_one = self.forward_generator(latents, noisy_samples_plus_one, sigmas, pyramid_latents)
+        return fdata, fdata_plus_one
