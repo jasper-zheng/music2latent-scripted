@@ -12,7 +12,7 @@ data_fractions = None                                                       # li
 data_path_test = '/media/datasets/test_dataset'                             # path of samples used for FAD testing (e.g. musiccaps)
 data_extensions = ['.wav', '.flac']                                         # list of extensions of audio files to search for in the given paths
 
-num_samples_fad = 500                                                   # number of samples that are encoded and decoded for FAD evaluation
+num_samples_fad = 500                                                       # number of samples that are encoded and decoded for FAD evaluation
 
 
 
