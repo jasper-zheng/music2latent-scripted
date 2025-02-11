@@ -83,12 +83,12 @@ You always need to specify `data_paths` and `data_path_test`.  `data_paths` shou
 
 **Important Hyperparameters:**
 
-*   **`batch_size`:**  Effective batch size is `batch_size * num_gpus * accumulate_gradients`.
+*   **`batch_size`:**  Batch size for training
 *   **`lr`:**  Initial learning rate.
 *   **`lr_decay`:** Learning rate decay schedule (`cosine`, `linear`, `inverse_sqrt`, or `None`).
 *   **`total_iters`:** Total number of training iterations.
 *   **`data_paths`:** A *list* of paths to your training datasets. The code recursively searches for `.wav` and `.flac` files (or other extensions you specify in `data_extensions`).
-*   **`data_fractions`:**  A *list* of weights, specifying how often to sample from each dataset in `data_paths`.  If `None`, datasets are sampled uniformly.
+*   **`data_fractions`:**  A *list* of sampling weights, specifying how often to sample from each dataset in `data_paths`.  If `None`, datasets are sampled uniformly.
 *   **`data_path_test`:**  The path to your *test* dataset, used for calculating the Frechet Audio Distance (FAD) during training.
 *   **`compile_model`:**  Whether to use `torch.compile` for potential speedups (see below).
 *   **`multi_gpu`:**  Enable multi-GPU training with `torchrun`.
@@ -101,7 +101,7 @@ See `music2latent/hparams.py` for *all* available hyperparameters and their defa
 
 Also, see the `configs/config.py` file for an example configuration file containing all the hyperparameters and a description of each. You can copy this file and modify it to suit your needs.
 
-### 2. Running Training
+### 2. Launching a Training Run
 
 To start a training run, use the `launch.py` script with the `--config` argument:
 
@@ -109,7 +109,7 @@ To start a training run, use the `launch.py` script with the `--config` argument
 python launch.py --config path/to/your/config.py
 ```
 
-**Checkpoints:**  During training, checkpoints (saved model states) will be stored in the directory specified by the `checkpoint_path` hyperparameter (default: `checkpoints`).  The best checkpoint (lowest FAD) and/or the latest checkpoint will be kept during training.
+**Checkpoints:**  During training, checkpoints will be stored in the directory specified by the `checkpoint_path` hyperparameter (default: `checkpoints`).  The best checkpoint (lowest FAD) and/or the latest checkpoint will be kept during training.
 
 **TensorBoard:** Training progress (loss, FAD, audio samples, etc.) is logged using TensorBoard.  You can view these logs by running:
 
