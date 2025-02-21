@@ -98,7 +98,8 @@ class Trainer:
         noisy_samples = add_noise(data, noises, sigmas_step)
         noisy_samples_plus_one = add_noise(data, noises, sigmas)
 
-        loss = self.forward_pass_consistency(data_encoder, noisy_samples, noisy_samples_plus_one, sigmas_step, sigmas)
+        with misc.ddp_sync(self.ddp, ((self.it+1) % hparams.accumulate_gradients==0) or (self.it+1==len(self.dl))):
+            loss = self.forward_pass_consistency(data_encoder, noisy_samples, noisy_samples_plus_one, sigmas_step, sigmas)
         self.scaler.scale(loss.float()).backward()
         loss = loss.detach().cpu().item()
 
