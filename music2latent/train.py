@@ -318,7 +318,7 @@ class Trainer:
         best_checkpoint_path = ''
         
         if hparams.load_path is not None:
-            checkpoint = torch.load(hparams.load_path, map_location=torch.device('cpu'))
+            checkpoint = torch.load(hparams.load_path, map_location=torch.device('cpu'), weights_only=False)
             self.load_matching_weights(gen, checkpoint['gen_state_dict'])
             if hparams.load_optimizer:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

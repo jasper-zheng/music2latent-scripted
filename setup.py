@@ -17,7 +17,9 @@ setup(
         'librosa',
         'torchaudio',
         'laion-clap',
-        'scipy'
+        'scipy',
+        'tensorboard',
+        'resampy'
     ],
     license='CC BY-NC 4.0',
     url='https://github.com/SonyCSLParis/music2latent',

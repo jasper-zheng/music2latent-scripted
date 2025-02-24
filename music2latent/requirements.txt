@@ -6,3 +6,5 @@ laion-clap
 librosa
 torchaudio
 scipy
+tensorboard
+resampy
