@@ -1,6 +1,6 @@
 from .hparams import hparams
 from .utils import *
-from .audio import *
+from .scripted_audio import *
 
 import torch
 import torch.nn as nn
@@ -13,17 +13,17 @@ def zero_init(module):
             p.detach().zero_()
     return module
 
-def upsample_1d(x):
-    return F.interpolate(x, scale_factor=2, mode="nearest")
+# def upsample_1d(x):
+#     return F.interpolate(x, scale_factor=2, mode="nearest")
 
-def downsample_1d(x):
-    return F.avg_pool1d(x, kernel_size=2, stride=2)
+# def downsample_1d(x):
+#     return F.avg_pool1d(x, kernel_size=2, stride=2)
 
-def upsample_2d(x):
-    return F.interpolate(x, scale_factor=2, mode="nearest")
+# def upsample_2d(x):
+#     return F.interpolate(x, scale_factor=2, mode="nearest")
 
-def downsample_2d(x):
-    return F.avg_pool2d(x, kernel_size=2, stride=2)
+# def downsample_2d(x):
+#     return F.avg_pool2d(x, kernel_size=2, stride=2)
 
 
 class LayerNorm(nn.Module):
@@ -168,6 +168,7 @@ class Attention(nn.Module):
             bs,len,freq,channels = x.shape[0],x.shape[1],x.shape[2],x.shape[3]
             x = x.reshape(bs*len,freq,channels) # shape: [bs*len,freq,channels]
         else:
+            bs,len,freq,channels = x.shape[0],x.shape[1],0,x.shape[2]
             x = x.permute(0,2,1) # shape: [bs,len,channels]
         
         x = self.mha(x, x, x, need_weights=False)[0]
