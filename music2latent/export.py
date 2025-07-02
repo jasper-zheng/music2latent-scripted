@@ -1,24 +1,20 @@
 # from .hparams import hparams
-from .utils import *
-from .scripted_audio import *
 
-from .models import *
+from .scripted_audio import *
 
 from . import nn_diffusion_tilde
 
-from typing import Tuple, List
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class ScriptedConv2d(nn.Conv2d):
-    """Custom Conv2d class with proper type annotations for TorchScript"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-        return self._conv_forward(x[0], self.weight, self.bias)
+def zero_init(module, init_as_zero: bool = True):
+    if init_as_zero:
+        for p in module.parameters():
+            p.detach().zero_()
+    return module
 
 def upsample_1d(x):
     return F.interpolate(x, scale_factor=2.0, mode="nearest")
@@ -31,6 +27,79 @@ def upsample_2d(x):
 
 def downsample_2d(x):
     return F.avg_pool2d(x, kernel_size=2, stride=2)
+
+class FreqGain(nn.Module):
+    def __init__(self, freq_dim):
+        super(FreqGain, self).__init__()
+        self.scale = nn.Parameter(torch.ones((1,1,freq_dim,1)))
+
+    def forward(self, input):
+        return input*self.scale
+
+# adapted from https://github.com/yang-song/score_sde_pytorch/blob/main/models/layerspp.py
+class GaussianFourierProjection(torch.nn.Module):
+  """Gaussian Fourier embeddings for noise levels."""
+  def __init__(self, embedding_size=128, scale=0.02):
+    super().__init__()
+    self.W = torch.nn.Parameter(torch.randn(embedding_size//2) * scale, requires_grad=False)
+  def forward(self, x):
+    x_proj = x[:, None] * self.W[None, :] * 2. * np.pi
+    return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
+class PositionalEmbedding(torch.nn.Module):
+    def __init__(self, embedding_size=128, max_positions=10000):
+        super().__init__()
+        self.embedding_size = embedding_size
+        self.max_positions = max_positions
+    def forward(self, x):
+        freqs = torch.arange(start=0, end=self.embedding_size//2, dtype=torch.float32, device=x.device)
+        freqs = freqs / (self.embedding_size // 2 - 1)
+        freqs = (1 / self.max_positions) ** freqs
+        x = x.ger(freqs.to(x.dtype))
+        x = torch.cat([torch.sin(x), torch.cos(x)], dim=-1)
+        return x
+
+class MultiheadAttention(nn.MultiheadAttention):
+    def _reset_parameters(self):
+        super()._reset_parameters()
+        self.out_proj = zero_init(self.out_proj)
+
+class ScriptedAttention(nn.Module):
+    def __init__(self, dim, heads=4, normalize=True, use_2d=False):
+        super(ScriptedAttention, self).__init__()
+        
+        self.normalize = normalize
+        self.use_2d = use_2d
+        
+        self.mha = MultiheadAttention(embed_dim=dim, num_heads=heads, dropout=0.0, add_zero_attn=False, batch_first=True)
+        self.norm = nn.GroupNorm(min(dim//4, 32), dim) if normalize else nn.Identity()
+
+    def forward(self, x):
+        inp = x
+        x = self.norm(x)
+        
+        if self.use_2d:
+            x = x.permute(0,3,2,1) # shape: [bs,len,freq,channels]
+            bs,len,freq,channels = x.shape[0],x.shape[1],x.shape[2],x.shape[3]
+            x = x.reshape(bs*len,freq,channels) # shape: [bs*len,freq,channels]
+        else:
+            bs,len,freq,channels = x.shape[0],x.shape[1],0,x.shape[2]
+            x = x.permute(0,2,1) # shape: [bs,len,channels]
+        
+        x = self.mha(x, x, x, need_weights=False)[0]
+        if self.use_2d:
+            x = x.reshape(bs,len,freq,channels).permute(0,3,2,1)
+        else:
+            x = x.permute(0,2,1)
+        x = x+inp
+        return x
+    
+class ScriptedConv2d(nn.Conv2d):
+    """Custom Conv2d class with proper type annotations for TorchScript"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        return self._conv_forward(x[0], self.weight, self.bias)
 
 class ScriptedUpsampleConv(nn.Module):
     def __init__(self, in_channels, out_channels=None, use_2d=False, normalize=False):
@@ -166,16 +235,6 @@ class ScriptedDownsampleFreqConvProj(nn.Module):
         x = self.c(x)
         return x
     
-
-class EmbeddingProjector(nn.Module):
-    def __init__(self, cond_channels, out_channels):
-        super(EmbeddingProjector, self).__init__()
-        self.emb_proj = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU())
-        self.proj_emb = zero_init(nn.Linear(cond_channels, out_channels))
-
-    def forward(self, x):
-        return x
-    
 class ScriptedResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, hparams, cond_channels=None, kernel_size=3, downsample=False, upsample=False, normalize=True, leaky=False, attention=False, heads=4, use_2d=False, normalize_residual=False):
         super(ScriptedResBlock, self).__init__()
@@ -214,10 +273,7 @@ class ScriptedResBlock(nn.Module):
             self.use_time_emb = False
             self.proj_emb = nn.Identity()
         self.dropout = nn.Dropout(hparams.dropout_rate)
-        if attention:
-            self.att = Attention(out_channels, heads, use_2d=use_2d)
-        else:
-            self.att = nn.Identity()
+        self.att = ScriptedAttention(out_channels, heads, use_2d=use_2d) if attention else nn.Identity()
 
         self.min_res_dropout = hparams.min_res_dropout
 
@@ -245,11 +301,7 @@ class ScriptedResBlock(nn.Module):
                 x = upsample_1d(x)
                 y = upsample_1d(y)
         x = self.conv1(x)
-        # if time_emb is not None:
-        #     if self.use_2d:
-        #         x = x+self.proj_emb(time_emb)[:,:,None,None]
-        #     else:
-        #         x = x+self.proj_emb(time_emb)[:,:,None]
+        
         if self.normalize:
             x = self.norm2(x)
         x = self.activation(x)
@@ -301,16 +353,11 @@ class ScriptedResBlockProj(nn.Module):
             self.use_time_emb = False
             self.proj_emb = nn.Identity()
         self.dropout = nn.Dropout(hparams.dropout_rate)
-        if attention:
-            self.att = Attention(out_channels, heads, use_2d=use_2d)
-        else:
-            self.att = nn.Identity()
+        self.att = ScriptedAttention(out_channels, heads, use_2d=use_2d) if attention else nn.Identity()
 
         self.min_res_dropout = hparams.min_res_dropout
 
     def forward(self, x_tup: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-    # def forward(self, x_in, time_emb):
-        
         x_in = x_tup[0]
         time_emb = x_tup[1]
 
@@ -337,7 +384,7 @@ class ScriptedResBlockProj(nn.Module):
                 x = upsample_1d(x)
                 y = upsample_1d(y)
         x = self.conv1(x)
-        # if time_emb is not None:
+        
         if self.use_2d:
             x = x+self.proj_emb(time_emb)[:,:,None,None]
         else:
@@ -427,7 +474,6 @@ class ScriptedEncoder(nn.Module):
                     l = 0
 
         x = self.prenorm_1d_to_2d(x)
-
         x = x.reshape(x.size(0), x.size(1) * x.size(2), x.size(3))
 
         for layer in self.bottleneck_layers:
@@ -484,9 +530,7 @@ class ScriptedDecoder(nn.Module):
 
 
     def forward(self, x):
-
         x = self.conv_inp(x)
-        
         for layer in self.bottleneck_layers:
             x = layer(x)
         x = self.conv_out_bottleneck(x)
@@ -661,7 +705,6 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
                 x = layer((x,time_emb))
                 k = k + 1
                 l = 0
-        # x, skip_list = self.down_layers(x, time_emb, pyramid_latents, self.layers_list)
 
         # UPSAMPLING
         k = 0
@@ -704,15 +747,24 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         decoded_wv = realimag2wv(decoded_spec, self.hop, fac=4)
         return decoded_wv
     
-    # def forward(self, data_encoder, noisy_samples, noisy_samples_plus_one, sigmas_step, sigmas):
+    @torch.jit.export
+    def encode(self, wv):
+        assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, channels, sample)"
+        with torch.no_grad():
+            repr_encoder = wv2realimag(wv[0], self.hop, fac=4)
+            latent = self.encoder(repr_encoder)
+            latent = latent/self.sigma_rescale
+        assert latent.dim() == 3, "Output should be a 3D tensor (batch_size, latent_dim, sample)"
+        return latent
+    
     @torch.jit.export
     def forward(self, wv):
-        assert wv.dim() == 3, "Input should be a 4D tensor (batch_size, channels, sample)"
+        assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, channels, sample)"
         with torch.no_grad():
             repr_encoder = wv2realimag(wv[0], self.hop, fac=4)
             latent = self.encoder(repr_encoder)
             latent = latent/self.sigma_rescale
 
             wv_rec = self.decode(latent).unsqueeze(0)  # Add batch dimension
-        assert wv_rec.dim() == 3, "Output should be a 4D tensor (batch_size, channels, sample)"
+        assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec

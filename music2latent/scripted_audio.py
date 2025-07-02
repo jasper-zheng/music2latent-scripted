@@ -7,6 +7,173 @@ import matplotlib.pyplot as plt
 
 from typing import Optional, List
 
+class StreamingSTFT:
+    """Streaming STFT processor with buffer management"""
+    
+    def __init__(self, hop_size: int, fac: int, device: str = 'cpu'):
+        self.hop_size = hop_size
+        self.fac = fac
+        self.frame_length = fac * hop_size
+        self.device = device
+        
+        # Input buffer to maintain overlap between chunks
+        self.input_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
+        
+        # Window function
+        self.window = torch.hann_window(self.frame_length, device=device)
+        
+    def process_chunk(self, chunk: torch.Tensor) -> torch.Tensor:
+        """
+        Process a chunk of audio with STFT
+        
+        Args:
+            chunk: Input audio chunk [batch_size, samples]
+            
+        Returns:
+            STFT frames [batch_size, freq_bins, time_frames]
+        """
+        batch_size = chunk.shape[0]
+        
+        # Expand buffer to match batch size if needed
+        if self.input_buffer.shape[0] != batch_size:
+            self.input_buffer = self.input_buffer.unsqueeze(0).expand(batch_size, -1)
+        
+        # Prepend buffer to chunk
+        padded_chunk = torch.cat([self.input_buffer, chunk], dim=-1)
+        
+        # Update buffer with end of current chunk
+        buffer_size = self.frame_length - self.hop_size
+        if chunk.shape[-1] >= buffer_size:
+            self.input_buffer = chunk[..., -buffer_size:].clone()
+        else:
+            # If chunk is smaller than buffer, slide the buffer
+            self.input_buffer = torch.cat([
+                self.input_buffer[..., chunk.shape[-1]:], 
+                chunk
+            ], dim=-1)
+        
+        # Perform STFT on padded chunk
+        padded_chunk = self.stft(padded_chunk)
+        return padded_chunk[:,:self.hop_size*2,:]
+    
+    def stft(self, wv: torch.Tensor) -> torch.Tensor:
+        """STFT implementation"""
+        framed_signals = frame(wv, self.frame_length, self.hop_size)
+        framed_signals = framed_signals * self.window
+        return torch.fft.rfft(framed_signals, n=None, dim=-1, norm=None).permute(0, 2, 1)
+    
+    def reset(self):
+        """Reset the buffer state"""
+        self.input_buffer.zero_()
+
+
+class StreamingISTFT:
+    """Streaming ISTFT processor with buffer management"""
+    
+    def __init__(self, hop_size: int, fac: int, device: str = 'cpu'):
+        self.hop_size = hop_size
+        self.fac = fac
+        self.frame_length = fac * hop_size
+        self.device = device
+        
+        # Output buffer for overlap-add
+        self.output_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
+        
+        # Window function
+        self.window = torch.hann_window(self.frame_length, device=device)
+        self.inv_window = inverse_stft_window(self.window, self.frame_length, self.hop_size)
+        
+    def process_chunk(self, stft_frames: torch.Tensor) -> torch.Tensor:
+        """
+        Process STFT frames back to audio with overlap-add
+        
+        Args:
+            stft_frames: STFT frames [batch_size, freq_bins, time_frames]
+            
+        Returns:
+            Audio chunk [batch_size, samples]
+        """
+        batch_size = stft_frames.shape[0]
+        
+        # Expand buffer to match batch size if needed
+        if self.output_buffer.shape[0] != batch_size:
+            self.output_buffer = self.output_buffer.unsqueeze(0).expand(batch_size, -1)
+        
+        # Inverse FFT
+        x = torch.fft.irfft(stft_frames, dim=-2).permute(0,2,1)  # [batch, time_frames, frame_length]
+        # print(f"Shape after irfft: {x.shape}")
+        # print(f"Shape of inv_window: {self.inv_window.shape}")
+        # Apply inverse window
+        x = x * self.inv_window.unsqueeze(0).unsqueeze(0)
+        # x = x * self.inv_window.unsqueeze(0)  # [batch, time_frames, frame_length]
+        
+        # Perform streaming overlap-add
+        output_chunk = self.streaming_overlap_add(x)
+        
+        return output_chunk
+    
+    def streaming_overlap_add(self, frames: torch.Tensor) -> torch.Tensor:
+        """
+        Streaming overlap-add that maintains buffer state
+        
+        Args:
+            frames: Time-domain frames [batch_size, time_frames, frame_length]
+            
+        Returns:
+            Output audio chunk [batch_size, samples]
+        """
+        batch_size, num_frames, frame_length = frames.shape
+        
+        # Calculate output length for this chunk
+        chunk_length = self.hop_size * num_frames
+        output_chunk = torch.zeros(batch_size, chunk_length, device=frames.device)
+        
+        # Process each frame
+        for i in range(num_frames):
+            frame = frames[:, i, :]  # [batch_size, frame_length]
+            start_idx = i * self.hop_size
+            
+            # Add overlapping part with buffer
+            if i == 0 and self.output_buffer.numel() > 0:
+                overlap_len = min(self.output_buffer.shape[-1], frame_length)
+                output_chunk[:, :overlap_len] += self.output_buffer[:, :overlap_len]
+                output_chunk[:, :overlap_len] += frame[:, :overlap_len]
+                
+                # Add non-overlapping part
+                if frame_length > overlap_len:
+                    end_idx = min(start_idx + frame_length, chunk_length)
+                    output_chunk[:, overlap_len:end_idx] += frame[:, overlap_len:end_idx-start_idx]
+            else:
+                # Add frame to output
+                end_idx = min(start_idx + frame_length, chunk_length)
+                if end_idx > start_idx:
+                    output_chunk[:, start_idx:end_idx] += frame[:, :end_idx-start_idx]
+        
+        # Update buffer with the tail that extends beyond current chunk
+        if num_frames > 0:
+            last_frame = frames[:, -1, :]
+            last_start = (num_frames - 1) * self.hop_size
+            buffer_start = chunk_length - last_start
+            
+            if buffer_start < frame_length:
+                self.output_buffer = last_frame[:, buffer_start:].clone()
+            else:
+                self.output_buffer.zero_()
+        
+        return output_chunk
+    
+    def reset(self):
+        """Reset the buffer state"""
+        self.output_buffer.zero_()
+
+
+# Convenience functions for streaming processing
+def create_streaming_processors(hop_size: int, fac: int, device: str = 'cpu'):
+    """Create streaming STFT and ISTFT processors"""
+    stft_processor = StreamingSTFT(hop_size, fac, device)
+    istft_processor = StreamingISTFT(hop_size, fac, device)
+    return stft_processor, istft_processor
+
 def wv2spec(self, wv, hop_size=256, fac=4):
     X = stft(wv, hop_size=hop_size, fac=fac, device=wv.device)
     X = power2db(torch.abs(X)**2)
@@ -56,13 +223,39 @@ def to_representation(x, hop_size: int = 512):
 def to_waveform(x, hop_size: int = 512):
     return realimag2wv(x, hop_size)
 
+# Streaming versions of audio conversion functions
+def streaming_wv2realimag(streaming_stft: StreamingSTFT, chunk: torch.Tensor) -> torch.Tensor:
+    """Convert audio chunk to real/imaginary representation using streaming STFT"""
+    X = streaming_stft.process_chunk(chunk)
+    X = X[:, :streaming_stft.hop_size*2, :]  # Limit frequency bins
+    X_complex = X.permute(0, 2, 1)  # [batch, time, freq]
+    X_normalized = normalize_complex(X_complex)
+    return torch.stack((torch.real(X_normalized), torch.imag(X_normalized)), -3)
+
+def streaming_realimag2wv(streaming_istft: StreamingISTFT, x: torch.Tensor) -> torch.Tensor:
+    """Convert real/imaginary representation back to audio using streaming ISTFT"""
+    x = torch.nn.functional.pad(x, (0, 0, 0, 1))
+    real, imag = torch.chunk(x, 2, -3)
+    X = torch.complex(real.squeeze(-3), imag.squeeze(-3))
+    X = denormalize_complex(X)
+    X_permuted = X.permute(0, 2, 1)  # [batch, freq, time]
+    return streaming_istft.process_chunk(X_permuted).clamp(-1., 1.)
+
+def streaming_to_representation(streaming_stft: StreamingSTFT, chunk: torch.Tensor, hop_size: int = 512) -> torch.Tensor:
+    """Streaming version of to_representation"""
+    return streaming_wv2realimag(streaming_stft, chunk)
+
+def streaming_to_waveform(streaming_istft: StreamingISTFT, x: torch.Tensor, hop_size: int = 512) -> torch.Tensor:
+    """Streaming version of to_waveform"""
+    return streaming_realimag2wv(streaming_istft, x)
+
 def full_shape(inner_shape: List[int], outer_dimensions: List[int]):
     s = torch.cat([torch.tensor(outer_dimensions), torch.tensor(inner_shape)], 0)
     s = list(s)
     s = [int(el) for el in s]
     return s
 
-def overlap_and_add(signal, frame_step: int):
+def overlap_and_add(signal: torch.Tensor, frame_step: int):
 
     outer_dimensions = signal.shape[:-2]
     outer_rank = torch.numel(torch.tensor(outer_dimensions))

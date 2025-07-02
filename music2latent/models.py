@@ -1,6 +1,6 @@
 from .hparams import hparams
 from .utils import *
-from .scripted_audio import *
+from .audio import *
 
 import torch
 import torch.nn as nn
@@ -13,17 +13,17 @@ def zero_init(module):
             p.detach().zero_()
     return module
 
-# def upsample_1d(x):
-#     return F.interpolate(x, scale_factor=2, mode="nearest")
+def upsample_1d(x):
+    return F.interpolate(x, scale_factor=2.0, mode="nearest")
 
-# def downsample_1d(x):
-#     return F.avg_pool1d(x, kernel_size=2, stride=2)
+def downsample_1d(x):
+    return F.avg_pool1d(x, kernel_size=2, stride=2)
 
-# def upsample_2d(x):
-#     return F.interpolate(x, scale_factor=2, mode="nearest")
+def upsample_2d(x):
+    return F.interpolate(x, scale_factor=2.0, mode="nearest")
 
-# def downsample_2d(x):
-#     return F.avg_pool2d(x, kernel_size=2, stride=2)
+def downsample_2d(x):
+    return F.avg_pool2d(x, kernel_size=2, stride=2)
 
 
 class LayerNorm(nn.Module):
@@ -117,7 +117,7 @@ class UpsampleFreqConv(nn.Module):
     def forward(self, x):
         if self.normalize:
             x = self.norm(x)
-        x = F.interpolate(x, scale_factor=(4,1), mode="nearest")
+        x = F.interpolate(x, scale_factor=(4.0,1.0), mode="nearest")
         x = self.c(x)
         return x
 
