@@ -653,6 +653,17 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             test_buffer_size = 42496
         )
 
+        # TODO: make this changeable
+        self.batch_size = 1
+        self.max_length = 100
+
+        self.register_buffer('init_noise', torch.zeros((self.batch_size, 
+                                                        self.data_channels, 
+                                                        self.hop*2, 
+                                                        self.downscaling_factor*self.max_length)
+                                                        )*self.sigma_max)
+        # self.init_noise = torch.randn((num_samples, self.data_channels, self.hop*2, sample_length)).to(latent.device)*self.sigma_max
+
     def get_c(self, sigma, sigma_correct: float, sigma_data: float):
         c_skip = (sigma_data**2.)/(((sigma-sigma_correct)**2.) + (sigma_data**2.))
         c_out = (sigma_data*(sigma-sigma_correct))/(((sigma_data**2.) + (sigma**2.))**0.5)
@@ -738,12 +749,10 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
     def decode(self, latent):
         latent = latent*self.sigma_rescale
 
-        num_samples = latent.shape[0]
-        
         sample_length = int(latent.shape[-1]*self.downscaling_factor)
-
-        init_noise = torch.randn((num_samples, self.data_channels, self.hop*2, sample_length)).to(latent.device)*self.sigma_max
-        decoded_spec = self.forward_generator(latent, init_noise)
+        # init_noise = torch.randn((latent.shape[0], self.data_channels, self.hop*2, sample_length)).to(latent.device)*self.sigma_max
+        
+        decoded_spec = self.forward_generator(latent, self.init_noise[:,:,:,:sample_length])
         decoded_wv = realimag2wv(decoded_spec, self.hop, fac=4)
         return decoded_wv
     
@@ -763,8 +772,11 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         with torch.no_grad():
             repr_encoder = wv2realimag(wv[0], self.hop, fac=4)
             latent = self.encoder(repr_encoder)
-            latent = latent/self.sigma_rescale
 
-            wv_rec = self.decode(latent).unsqueeze(0)  # Add batch dimension
+            sample_length = int(latent.shape[-1]*self.downscaling_factor)
+            init_noise = torch.randn((latent.shape[0], self.data_channels, self.hop*2, sample_length)).to(latent.device)*self.sigma_max
+            
+            decoded_spec = self.forward_generator(latent, init_noise)
+            wv_rec = realimag2wv(decoded_spec, self.hop, fac=4).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec
