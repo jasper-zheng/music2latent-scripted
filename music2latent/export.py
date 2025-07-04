@@ -102,7 +102,7 @@ class ScriptedConv2d(nn.Conv2d):
         return self._conv_forward(x[0], self.weight, self.bias)
 
 class ScriptedUpsampleConv(nn.Module):
-    def __init__(self, in_channels, out_channels=None, use_2d=False, normalize=False):
+    def __init__(self, in_channels, out_channels=None, use_2d=True, normalize=False):
         super(ScriptedUpsampleConv, self).__init__()
         self.normalize = normalize
         self.use_2d = use_2d
@@ -123,7 +123,7 @@ class ScriptedUpsampleConv(nn.Module):
         return x
     
 class ScriptedUpsampleConvProj(nn.Module):
-    def __init__(self, in_channels, out_channels=None, use_2d=False, normalize=False):
+    def __init__(self, in_channels, out_channels=None, use_2d=True, normalize=False):
         super(ScriptedUpsampleConvProj, self).__init__()
         self.normalize = normalize
         self.use_2d = use_2d
@@ -316,7 +316,7 @@ class ScriptedResBlock(nn.Module):
         return x
 
 class ScriptedResBlockProj(nn.Module):
-    def __init__(self, in_channels, out_channels, hparams, cond_channels=None, kernel_size=3, downsample=False, upsample=False, normalize=True, leaky=False, attention=False, heads=4, use_2d=False, normalize_residual=False):
+    def __init__(self, in_channels, out_channels, hparams, cond_channels=None, kernel_size=3, downsample=False, upsample=False, normalize=True, leaky=False, attention=False, heads=4, use_2d=True, normalize_residual=False):
         super(ScriptedResBlockProj, self).__init__()
         self.normalize = normalize
         self.attention = attention
@@ -567,7 +567,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.reversed_layers_list = list(reversed(hparams.layers_list))
         self.multipliers_list = hparams.multipliers_list
         input_channels = hparams.base_channels*hparams.multipliers_list[0]
-        Conv = nn.Conv2d
+        # Conv = nn.Conv2d
 
         self.encoder = ScriptedEncoder(hparams)
         self.decoder = ScriptedDecoder(hparams)
@@ -582,7 +582,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.scale_inp = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
         self.scale_out = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
 
-        self.conv_inp = Conv(hparams.data_channels, input_channels, kernel_size=3, stride=1, padding=1)
+        self.conv_inp = nn.Conv2d(hparams.data_channels, input_channels, kernel_size=3, stride=1, padding=1)
         
         # DOWNSAMPLING
         down_layers = []
@@ -615,10 +615,10 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
                     up_layers.append(ScriptedUpsampleConvProj(input_channels, output_channels, use_2d=True))
                 input_channels = output_channels
                 
-        self.conv_decoded = Conv(input_channels, input_channels, kernel_size=1, stride=1, padding=0)
+        self.conv_decoded = nn.Conv2d(input_channels, input_channels, kernel_size=1, stride=1, padding=0)
         self.norm_out = nn.GroupNorm(min(input_channels//4, 32), input_channels)
         self.activation_out = nn.SiLU()
-        self.conv_out = zero_init(Conv(input_channels, hparams.data_channels, kernel_size=3, stride=1, padding=1))
+        self.conv_out = zero_init(nn.Conv2d(input_channels, hparams.data_channels, kernel_size=3, stride=1, padding=1))
             
         self.down_layers = nn.ModuleList(down_layers)
         self.up_layers = nn.ModuleList(up_layers)
@@ -641,7 +641,11 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
 
         self.sigma_rescale = sigma_rescale
 
+        self.stft_processor = StreamingSTFT(self.hop, 4)
+        self.istft_processor = StreamingISTFT(self.hop, 4)
+
         self.eval()
+    
         self.register_method(
             "forward",
             in_channels=1,
@@ -650,7 +654,8 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             out_ratio=1,
             input_labels=['(signal) Channel %d'%d for d in range(1, 1 + 1)],
             output_labels=['(signal) Channel %d'%d for d in range(1, 1+1)],
-            test_buffer_size = 42496
+            test_buffer_size = 40960
+            # test_buffer_size = 42496
         )
 
         # TODO: make this changeable
@@ -770,13 +775,15 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
     def forward(self, wv):
         assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, channels, sample)"
         with torch.no_grad():
-            repr_encoder = wv2realimag(wv[0], self.hop, fac=4)
+            # repr_encoder = wv2realimag(wv[0], self.hop, fac=4)
+            repr_encoder = self.stft_processor.process_chunk(wv[0])
             latent = self.encoder(repr_encoder)
 
             sample_length = int(latent.shape[-1]*self.downscaling_factor)
             init_noise = torch.randn((latent.shape[0], self.data_channels, self.hop*2, sample_length)).to(latent.device)*self.sigma_max
             
             decoded_spec = self.forward_generator(latent, init_noise)
-            wv_rec = realimag2wv(decoded_spec, self.hop, fac=4).unsqueeze(0)
+            # wv_rec = realimag2wv(decoded_spec, self.hop, fac=4).unsqueeze(0)
+            wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec

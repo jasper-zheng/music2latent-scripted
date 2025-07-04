@@ -167,3 +167,4 @@ music2latent/models/
 tmp/
 fad_stats/
 checkpoints/
+audio_samples/

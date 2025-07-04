@@ -2,30 +2,38 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import torchaudio
+# import torchaudio
 # import librosa
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 from typing import Optional, List
 
 class StreamingSTFT(nn.Module):
     """Streaming STFT processor with buffer management"""
     
-    def __init__(self, hop_size: int, fac: int, device: str = 'cpu'):
+    def __init__(self, hop_size: int, fac: int):
         super(StreamingSTFT, self).__init__()
         self.hop_size = hop_size
         self.fac = fac
         self.frame_length = fac * hop_size
-        self.device = device
+        # self.device = device
         
         # Input buffer to maintain overlap between chunks
-        self.input_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
-        # self.regis
-
+        # self.input_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
+        # self.register_buffer('input_buffer', torch.zeros(self.frame_length - self.hop_size))
+        
         # Window function
-        self.window = torch.hann_window(self.frame_length, device=device)
+        # self.window = torch.hann_window(self.frame_length, device=device)
+        # self.register_buffer('window', torch.hann_window(self.frame_length))
+        self.initialized = 0
+        self.init_buffer()
     
-    @torch.no_grad()
+    # @torch.jit.unused
+    def init_buffer(self):
+        self.register_buffer('input_buffer', torch.zeros(self.frame_length - self.hop_size))
+        self.register_buffer('window', torch.hann_window(self.frame_length))
+        self.initialized += 1
+
     def process_chunk(self, chunk: torch.Tensor) -> torch.Tensor:
         """
         Process a chunk of audio with STFT
@@ -36,6 +44,9 @@ class StreamingSTFT(nn.Module):
         Returns:
             STFT frames [batch_size, freq_bins, time_frames]
         """
+        # if not self.initialized:
+        #     self.init_buffer(chunk)
+
         batch_size = chunk.shape[0]
         
         # Expand buffer to match batch size if needed
@@ -76,21 +87,33 @@ class StreamingSTFT(nn.Module):
 class StreamingISTFT(nn.Module):
     """Streaming ISTFT processor with buffer management"""
     
-    def __init__(self, hop_size: int, fac: int, device: str = 'cpu'):
+    def __init__(self, hop_size: int, fac: int):
         super(StreamingISTFT, self).__init__()
         self.hop_size = hop_size
         self.fac = fac
         self.frame_length = fac * hop_size
-        self.device = device
+        # self.device = device
         
         # Output buffer for overlap-add
-        self.output_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
+        # self.output_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
+        # self.register_buffer('output_buffer', torch.zeros(self.frame_length - self.hop_size))
         
         # Window function
-        self.window = torch.hann_window(self.frame_length, device=device)
-        self.inv_window = inverse_stft_window(self.window, self.frame_length, self.hop_size)
+        # window = torch.hann_window(self.frame_length, device=device)
+        # window = torch.hann_window(self.frame_length)
+        # inv_window = inverse_stft_window(window, self.frame_length, self.hop_size)
+        # self.register_buffer('inv_window', inv_window)
+        self.initialized = 0
+        self.init_buffer()
+
+    # @torch.jit.unused
+    def init_buffer(self):
+        self.register_buffer('output_buffer', torch.zeros(self.frame_length - self.hop_size))
+        window = torch.hann_window(self.frame_length)
+        inv_window = inverse_stft_window(window, self.frame_length, self.hop_size)
+        self.register_buffer('inv_window', inv_window)
+        self.initialized += 1
     
-    @torch.no_grad()
     def process_chunk(self, stft_frames: torch.Tensor) -> torch.Tensor:
         """
         Process STFT frames back to audio with overlap-add
@@ -101,6 +124,9 @@ class StreamingISTFT(nn.Module):
         Returns:
             Audio chunk [batch_size, samples]
         """
+        # if not self.initialized:
+        #     self.init_buffer(stft_frames)
+
         batch_size = stft_frames.shape[0]
         
         stft_frames = torch.nn.functional.pad(stft_frames, (0,0,0,1))
@@ -173,7 +199,7 @@ class StreamingISTFT(nn.Module):
                 self.output_buffer.zero_()
         
         # Apply fade-in and fade-out to reduce clicking artifacts
-        fade_samples = min(self.hop_size // 4, chunk_length // 8)  # Adaptive fade length
+        fade_samples = min(self.hop_size // 1, chunk_length // 2)  # Adaptive fade length
         if fade_samples > 0:
             # Fade-in at the beginning
             fade_in = torch.linspace(0, 1, fade_samples, device=output_chunk.device)
@@ -191,24 +217,24 @@ class StreamingISTFT(nn.Module):
 
 
 # Convenience functions for streaming processing
-def create_streaming_processors(hop_size: int, fac: int, device: str = 'cpu'):
+def create_streaming_processors(hop_size: int, fac: int):
     """Create streaming STFT and ISTFT processors"""
-    stft_processor = StreamingSTFT(hop_size, fac, device)
-    istft_processor = StreamingISTFT(hop_size, fac, device)
+    stft_processor = StreamingSTFT(hop_size, fac)
+    istft_processor = StreamingISTFT(hop_size, fac)
     return stft_processor, istft_processor
 
-def wv2spec(self, wv, hop_size=256, fac=4):
-    X = stft(wv, hop_size=hop_size, fac=fac, device=wv.device)
-    X = power2db(torch.abs(X)**2)
-    X = normalize(X)
-    return X
+# def wv2spec(self, wv, hop_size=256, fac=4):
+#     X = stft(wv, hop_size=hop_size, fac=fac, device=wv.device)
+#     X = power2db(torch.abs(X)**2)
+#     X = normalize(X)
+#     return X
 
-def spec2wv(S,P, hop_size=256, fac=4):
-    S = denormalize(S)
-    S = torch.sqrt(db2power(S))
-    P = P * np.pi
-    SP = torch.complex(S * torch.cos(P), S * torch.sin(P))
-    return istft(SP, fac=fac, hop_size=hop_size, device=SP.device)
+# def spec2wv(S,P, hop_size=256, fac=4):
+#     S = denormalize(S)
+#     S = torch.sqrt(db2power(S))
+#     P = P * np.pi
+#     SP = torch.complex(S * torch.cos(P), S * torch.sin(P))
+#     return istft(SP, fac=fac, hop_size=hop_size, device=SP.device)
 
 def denormalize_realimag(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.06):
     x = x/beta_rescale
@@ -237,14 +263,14 @@ def realimag2wv(x, hop_size: int, fac: int):
     X = denormalize_complex(X)
     return istft(X, fac=fac, hop_size=hop_size).clamp(-1.,1.)
 
-def to_representation_encoder(x, hop_size: int = 512):
-    return wv2realimag(x, hop_size)
+# def to_representation_encoder(x, hop_size: int = 512):
+#     return wv2realimag(x, hop_size)
 
-def to_representation(x, hop_size: int = 512):
-    return wv2realimag(x, hop_size)
+# def to_representation(x, hop_size: int = 512):
+#     return wv2realimag(x, hop_size)
 
-def to_waveform(x, hop_size: int = 512):
-    return realimag2wv(x, hop_size)
+# def to_waveform(x, hop_size: int = 512):
+#     return realimag2wv(x, hop_size)
 
 # Streaming versions of audio conversion functions
 def streaming_wv2realimag(streaming_stft: StreamingSTFT, chunk: torch.Tensor) -> torch.Tensor:
