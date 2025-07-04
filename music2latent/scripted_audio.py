@@ -199,7 +199,7 @@ class StreamingISTFT(nn.Module):
                 self.output_buffer.zero_()
         
         # Apply fade-in and fade-out to reduce clicking artifacts
-        fade_samples = min(self.hop_size // 1, chunk_length // 2)  # Adaptive fade length
+        fade_samples = min(self.hop_size // 4, chunk_length // 8)  # Adaptive fade length
         if fade_samples > 0:
             # Fade-in at the beginning
             fade_in = torch.linspace(0, 1, fade_samples, device=output_chunk.device)

@@ -474,6 +474,7 @@ class ScriptedEncoder(nn.Module):
                     l = 0
 
         x = self.prenorm_1d_to_2d(x)
+        print("x shape after prenorm_1d_to_2d:", x.shape)
         x = x.reshape(x.size(0), x.size(1) * x.size(2), x.size(3))
 
         for layer in self.bottleneck_layers:
