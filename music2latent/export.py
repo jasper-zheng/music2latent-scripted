@@ -110,9 +110,9 @@ class ScriptedUpsampleConv(nn.Module):
             out_channels = in_channels
         self.norm = nn.GroupNorm(min(in_channels//4, 32), in_channels) if normalize else nn.Identity()
         if use_2d:
-            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding='same')
+            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding='same', padding_mode='zeros')
         else:
-            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=1, padding='same')
+            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=1, padding='same', padding_mode='zeros')
     def forward(self, x):
         x = self.norm(x)
         if self.use_2d:
@@ -131,9 +131,9 @@ class ScriptedUpsampleConvProj(nn.Module):
             out_channels = in_channels
         self.norm = nn.GroupNorm(min(in_channels//4, 32), in_channels) if normalize else nn.Identity()
         if use_2d:
-            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding='same')
+            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding='same', padding_mode='zeros')
         else:
-            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=1, padding='same')
+            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=1, padding='same', padding_mode='zeros')
     def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x = self.norm(x[0])
         if self.use_2d:
@@ -151,9 +151,9 @@ class ScriptedDownsampleConv(nn.Module):
             out_channels = in_channels
         self.norm = nn.GroupNorm(min(in_channels//4, 32), in_channels) if normalize else nn.Identity()
         if use_2d:
-            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)
+            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, padding_mode='zeros')
         else:
-            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)
+            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, padding_mode='zeros')
 
     def forward(self, x):
         x = self.norm(x)
@@ -168,9 +168,9 @@ class ScriptedDownsampleConvProj(nn.Module):
             out_channels = in_channels
         self.norm = nn.GroupNorm(min(in_channels//4, 32), in_channels) if normalize else nn.Identity()
         if use_2d:
-            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)
+            self.c = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, padding_mode='zeros')
         else:
-            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)
+            self.c = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, padding_mode='zeros')
 
     def forward(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         x = self.norm(x[0])
@@ -250,8 +250,8 @@ class ScriptedResBlock(nn.Module):
             Conv = nn.Conv2d
         else:
             Conv = nn.Conv1d
-        self.conv1 = Conv(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same')
-        self.conv2 = zero_init(Conv(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same'))
+        self.conv1 = Conv(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same', padding_mode='zeros')
+        self.conv2 = zero_init(Conv(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same', padding_mode='zeros'))
         if in_channels!=out_channels:
             self.res_conv = Conv(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
         else:
@@ -330,8 +330,8 @@ class ScriptedResBlockProj(nn.Module):
             Conv = nn.Conv2d
         else:
             Conv = nn.Conv1d
-        self.conv1 = Conv(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same')
-        self.conv2 = zero_init(Conv(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same'))
+        self.conv1 = Conv(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same', padding_mode='zeros')
+        self.conv2 = zero_init(Conv(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding='same', padding_mode='zeros'))
         if in_channels!=out_channels:
             self.res_conv = Conv(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
         else:
@@ -415,7 +415,7 @@ class ScriptedEncoder(nn.Module):
         self.gain = FreqGain(freq_dim=hparams.hop*2)
 
         channels = hparams.data_channels
-        self.conv_inp = Conv(channels, input_channels, kernel_size=3, stride=1, padding=1)
+        self.conv_inp = Conv(channels, input_channels, kernel_size=3, stride=1, padding=1, padding_mode='zeros')
 
         self.freq_dim = (hparams.hop*2)//(4**hparams.freq_downsample_list.count(1))
         self.freq_dim = self.freq_dim//(2**hparams.freq_downsample_list.count(0))
@@ -474,7 +474,7 @@ class ScriptedEncoder(nn.Module):
                     l = 0
 
         x = self.prenorm_1d_to_2d(x)
-        print("x shape after prenorm_1d_to_2d:", x.shape)
+        # print("x shape after prenorm_1d_to_2d:", x.shape)
         x = x.reshape(x.size(0), x.size(1) * x.size(2), x.size(3))
 
         for layer in self.bottleneck_layers:
@@ -583,7 +583,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.scale_inp = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
         self.scale_out = nn.Sequential(nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), nn.Linear(hparams.cond_channels, hparams.cond_channels), nn.SiLU(), zero_init(nn.Linear(hparams.cond_channels, hparams.hop*2)))
 
-        self.conv_inp = nn.Conv2d(hparams.data_channels, input_channels, kernel_size=3, stride=1, padding=1)
+        self.conv_inp = nn.Conv2d(hparams.data_channels, input_channels, kernel_size=3, stride=1, padding=1, padding_mode='zeros')
         
         # DOWNSAMPLING
         down_layers = []
@@ -619,7 +619,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.conv_decoded = nn.Conv2d(input_channels, input_channels, kernel_size=1, stride=1, padding=0)
         self.norm_out = nn.GroupNorm(min(input_channels//4, 32), input_channels)
         self.activation_out = nn.SiLU()
-        self.conv_out = zero_init(nn.Conv2d(input_channels, hparams.data_channels, kernel_size=3, stride=1, padding=1))
+        self.conv_out = zero_init(nn.Conv2d(input_channels, hparams.data_channels, kernel_size=3, stride=1, padding=1, padding_mode='zeros'))
             
         self.down_layers = nn.ModuleList(down_layers)
         self.up_layers = nn.ModuleList(up_layers)
