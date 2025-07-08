@@ -11,7 +11,7 @@ from typing import Optional, List
 class StreamingSTFT(nn.Module):
     """Streaming STFT processor with buffer management"""
     
-    def __init__(self, hop_size: int, fac: int):
+    def __init__(self, hop_size: int, fac: int, use_power_ceil: bool = False, buffer_size: Optional[int] = None):
         super(StreamingSTFT, self).__init__()
         self.hop_size = hop_size
         self.fac = fac
@@ -98,10 +98,13 @@ class StreamingISTFT(nn.Module):
 
     # @torch.jit.unused
     def init_buffer(self):
+        # total_length = (num_frames - 1) * self.hop_size + frame_length
+
         self.register_buffer('output_buffer', torch.zeros(0))  # Start with empty buffer
         window = torch.hann_window(self.frame_length)
         inv_window = inverse_stft_window(window, self.frame_length, self.hop_size)
         self.register_buffer('inv_window', inv_window)
+        self.register_buffer
         self.initialized += 1
     
     def process_chunk(self, stft_frames: torch.Tensor) -> torch.Tensor:
@@ -149,12 +152,11 @@ class StreamingISTFT(nn.Module):
             Output audio chunk [batch_size, samples]
         """
         batch_size, num_frames, frame_length = frames.shape
-        
+        # print(f"batch_size: {batch_size}, num_frames: {num_frames}, frame_length: {frame_length}")
         # Calculate total length needed for all frames
         total_length = (num_frames - 1) * self.hop_size + frame_length
         
         # Create output buffer for this processing (including overlap regions)
-        # TODO: Buffer this:
         full_output = torch.zeros(batch_size, total_length, device=frames.device)
         
         # Add each frame at its correct position
@@ -207,30 +209,7 @@ def denormalize_complex(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.
     x = x/beta_rescale
     return (x.abs()**(1./alpha_rescale)).to(torch.complex64)*torch.exp(1j*torch.atan2(x.imag, x.real).to(torch.complex64))
 
-def wv2complex(wv, hop_size: int, fac: int):
-    X = stft(wv, hop_size, fac)
-    return X[:,:hop_size*2,:]
 
-def wv2realimag(wv, hop_size: int, fac: int):
-    X = wv2complex(wv, hop_size, fac)
-    X = normalize_complex(X)
-    return torch.stack((torch.real(X),torch.imag(X)), -3)
-
-def realimag2wv(x, hop_size: int, fac: int):
-    x = torch.nn.functional.pad(x, (0,0,0,1))
-    real,imag = torch.chunk(x, 2, -3)
-    X = torch.complex(real.squeeze(-3),imag.squeeze(-3))
-    X = denormalize_complex(X)
-    return istft(X, fac=fac, hop_size=hop_size).clamp(-1.,1.)
-
-# def to_representation_encoder(x, hop_size: int = 512):
-#     return wv2realimag(x, hop_size)
-
-# def to_representation(x, hop_size: int = 512):
-#     return wv2realimag(x, hop_size)
-
-# def to_waveform(x, hop_size: int = 512):
-#     return realimag2wv(x, hop_size)
 
 # Streaming versions of audio conversion functions
 def streaming_wv2realimag(streaming_stft: StreamingSTFT, chunk: torch.Tensor) -> torch.Tensor:
@@ -255,55 +234,6 @@ def streaming_to_waveform(streaming_istft: StreamingISTFT, x: torch.Tensor, hop_
     """Streaming version of to_waveform"""
     return streaming_realimag2wv(streaming_istft, x)
 
-def full_shape(inner_shape: List[int], outer_dimensions: List[int]):
-    s = torch.cat([torch.tensor(outer_dimensions), torch.tensor(inner_shape)], 0)
-    s = list(s)
-    s = [int(el) for el in s]
-    return s
-
-def overlap_and_add(signal: torch.Tensor, frame_step: int):
-
-    outer_dimensions = signal.shape[:-2]
-    outer_rank = torch.numel(torch.tensor(outer_dimensions))
-
-    frame_length = signal.shape[-1]
-    frames = signal.shape[-2]
-
-    # Compute output length.
-    output_length = frame_length + frame_step * (frames - 1)
-
-    # Compute the number of segments, per frame.
-    segments = -(-frame_length // frame_step)  # Divide and round up.
-
-    signal = torch.nn.functional.pad(signal, (0, segments * frame_step - frame_length, 0, segments))
-
-    shape = full_shape([frames + segments, segments, frame_step], outer_dimensions)
-    signal = torch.reshape(signal, shape)
-
-    perm = torch.cat([torch.arange(0, outer_rank), torch.tensor([el+outer_rank for el in [1, 0, 2]])], 0)
-    perm = list(perm)
-    perm = [int(el) for el in perm]
-    signal = torch.permute(signal, perm)
-
-    shape = full_shape([(frames + segments) * segments, frame_step], outer_dimensions)
-    signal = torch.reshape(signal, shape)
-
-    signal = signal[..., :(frames + segments - 1) * segments, :]
-
-    shape = full_shape([segments, (frames + segments - 1), frame_step], outer_dimensions)
-    signal = torch.reshape(signal, shape)
-
-    signal = signal.sum(-3)
-
-    # Flatten the array.
-    shape = full_shape([(frames + segments - 1) * frame_step], outer_dimensions)
-    signal = torch.reshape(signal, shape)
-
-    # Truncate to final length.
-    signal = signal[..., :output_length]
-
-    return signal
-
 def inverse_stft_window(forward_window, frame_length:int, frame_step:int):
     denom = forward_window**2
     overlaps = -(-frame_length // frame_step)
@@ -314,28 +244,6 @@ def inverse_stft_window(forward_window, frame_length:int, frame_step:int):
     denom = torch.reshape(denom, [overlaps * frame_step])
     return forward_window / denom[:frame_length]
 
-def istft(SP, fac: int, hop_size: int):
-    x = torch.fft.irfft(SP, dim=-2)
-    window = torch.hann_window(fac*hop_size).to(SP.device)
-    window = inverse_stft_window(window, fac*hop_size, hop_size)
-    x = x*window.unsqueeze(-1)
-    return overlap_and_add(x.permute(0,2,1), hop_size)
-
-# def frame(signal, frame_length, frame_step, pad_end=False, pad_value=0, axis=-1):
-#     """
-#     equivalent of tf.signal.frame
-#     """
-#     signal_length = signal.shape[axis]
-#     if pad_end:
-#         frames_overlap = frame_length - frame_step
-#         rest_samples = np.abs(signal_length - frames_overlap) % np.abs(frame_length - frames_overlap)
-#         pad_size = int(frame_length - rest_samples)
-#         if pad_size != 0:
-#             pad_axis = [0] * signal.ndim
-#             pad_axis[axis] = pad_size
-#             signal = F.pad(signal, pad_axis, "constant", pad_value)
-#     frames = signal.unfold(axis, frame_length, frame_step)
-#     return frames
 def frame(signal, frame_length: int, frame_step: int):
     """
     equivalent of tf.signal.frame
@@ -348,23 +256,3 @@ def frame(signal, frame_length: int, frame_step: int):
     
     frames = signal.unfold(-1, frame_length, frame_step)
     return frames
-
-def stft(wv, hop_size: int, fac: int):
-    window = torch.hann_window(fac*hop_size).to(wv.device)
-    framed_signals = frame(wv, fac*hop_size, hop_size)
-    framed_signals = framed_signals*window
-    return torch.fft.rfft(framed_signals, n=None, dim=- 1, norm=None).permute(0,2,1)
-
-def normalize(S, mu_rescale=-25., sigma_rescale=75.):
-    return (S - mu_rescale) / sigma_rescale
-
-def denormalize(S, mu_rescale=-25., sigma_rescale=75.):
-    return (S * sigma_rescale) + mu_rescale
-
-def db2power(S_db, ref=1.0):
-    return ref * torch.pow(10.0, 0.1 * S_db)
-
-def power2db(power, ref_value=1.0, amin=1e-10):
-    log_spec = 10.0 * torch.log10(torch.maximum(torch.tensor(amin), power))
-    log_spec -= 10.0 * torch.log10(torch.maximum(torch.tensor(amin), torch.tensor(ref_value)))
-    return log_spec
