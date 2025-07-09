@@ -1,10 +1,9 @@
+# Reused some functions from https://github.com/SonyCSLParis/music2latent/blob/master/music2latent/models.py
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-# import torchaudio
-# import librosa
-# import matplotlib.pyplot as plt
 
 from typing import Optional, List
 
@@ -16,15 +15,7 @@ class StreamingSTFT(nn.Module):
         self.hop_size = hop_size
         self.fac = fac
         self.frame_length = fac * hop_size
-        # self.device = device
         
-        # Input buffer to maintain overlap between chunks
-        # self.input_buffer = torch.zeros(self.frame_length - self.hop_size, device=device)
-        # self.register_buffer('input_buffer', torch.zeros(self.frame_length - self.hop_size))
-        
-        # Window function
-        # self.window = torch.hann_window(self.frame_length, device=device)
-        # self.register_buffer('window', torch.hann_window(self.frame_length))
         self.initialized = 0
         self.init_buffer()
     

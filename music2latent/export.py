@@ -1,12 +1,18 @@
-# from .hparams import hparams
 
-from .scripted_audio import *
-from .scripted_models import *
+from scripted_audio import *
+from scripted_models import *
 
-from . import nn_diffusion_tilde
+import nn_diffusion_tilde
 
 import torch
 import torch.nn as nn
+
+import importlib.util
+
+from hparams import hparams, HParams
+from hparams_inference import *
+
+from ema import ExponentialMovingAverage
 
 class ScriptedUNet(nn_diffusion_tilde.Module):
     __constants__ = ['mods']
@@ -18,7 +24,6 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.reversed_layers_list = list(reversed(hparams.layers_list))
         self.multipliers_list = hparams.multipliers_list
         input_channels = hparams.base_channels*hparams.multipliers_list[0]
-        # Conv = nn.Conv2d
 
         self.encoder = ScriptedEncoder(hparams)
         self.decoder = ScriptedDecoder(hparams)
@@ -103,6 +108,28 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
                                                         self.downscaling_factor*self.max_length)
                                                         )*self.sigma_max)
         
+        # sigma = self.sigma_max
+        # sigma = torch.ones((self.batch_size,), dtype=torch.float32)*sigma
+        # sigma_log = torch.log(sigma)/4.
+        # emb_sigma_log = self.emb(sigma_log)
+        # time_emb = self.emb_proj(emb_sigma_log)
+
+        # scale_w_inp = self.scale_inp(emb_sigma_log).reshape(self.batch_size,1,-1,1)
+        # scale_w_out = self.scale_out(emb_sigma_log).reshape(self.batch_size,1,-1,1)
+            
+        # c_skip, c_out, c_in = self.get_c(sigma, self.sigma_correct, self.sigma_data)
+
+        # self.register_buffer('c_skip', c_skip)
+        # self.register_buffer('c_out', c_out)
+        # self.register_buffer('c_in', c_in)
+        # self.register_buffer('sigma_log', sigma_log)
+        # self.register_buffer('emb_sigma_log', emb_sigma_log)
+        # self.register_buffer('time_emb', time_emb)
+        # self.register_buffer('scale_w_inp', scale_w_inp)
+        # self.register_buffer('scale_w_out', scale_w_out)
+        
+        
+        
         self.eval()
 
         self.register_method(
@@ -120,7 +147,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             in_channels=1,
             in_ratio=1,
             out_channels=hparams.bottleneck_channels,
-            out_ratio=4096,
+            out_ratio=hparams.ratio,
             input_labels=['(signal) Channel %d'%d for d in range(1, 1 + 1)],
             output_labels=[
                 f'(signal) Latent dimension {i + 1}'
@@ -131,7 +158,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.register_method(
             "decode",
             in_channels=hparams.bottleneck_channels,
-            in_ratio=4096,
+            in_ratio=hparams.ratio,
             out_channels=1,
             out_ratio=1,
             input_labels=[
@@ -150,12 +177,16 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
     
     def forward_generator(self, latents, x):
 
-        sigma = self.sigma_max
+        
         inp = x
         
         # CONDITIONING
+
+        sigma = self.sigma_max
         sigma = torch.ones((x.shape[0],), dtype=torch.float32).to(x.device)*sigma
         sigma_log = torch.log(sigma)/4.
+
+        # TODO: why this cannot be a buffer??
         emb_sigma_log = self.emb(sigma_log)
         time_emb = self.emb_proj(emb_sigma_log)
 
@@ -263,3 +294,72 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec
+    
+
+
+from absl import flags, app
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string('model',
+                    default='music2latent/models/music2latent.pt',
+                    help='Path to the load the pre-trained music2latent checkpoint (the .pt file)',
+                    required=False)
+
+flags.DEFINE_string('out',
+                    default='music2latent/models/music2latent-scripted.ts',
+                    help='Path and name to export the model to.',
+                    required=False)
+
+flags.DEFINE_string('config',
+                    default=None,
+                    help='Path to the congif.py file that used to train the model. If not provided, the default configuration in hparams.py be used.',
+                    required=False)
+
+flags.DEFINE_string('device',
+                    default='cpu',
+                    help='Which device to test inference. Default is cpu. Use mps for GPU for MacOS. Use cuda:0 for GPU testing.',
+                    required=False)
+
+flags.DEFINE_integer('ratio',
+                    default=4096,
+                    help='Compression ratio from waveform to latents, at the time domain',
+                    required=False)
+
+def main(argv):
+    if FLAGS.config is not None:
+        spec = importlib.util.spec_from_file_location("config", FLAGS.config)
+        config_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config_module)
+
+        config_dict = {
+            k: v for k, v in config_module.__dict__.items() if not k.startswith("__")
+        }
+        
+        # Add missing keys with empty values if they don't exist, 
+        # it doesn't matter because we're not doing any training
+        if 'data_paths' not in config_dict:
+            config_dict['data_paths'] = []
+        if 'data_path_test' not in config_dict:
+            config_dict['data_path_test'] = ""
+        
+        hparams.update(config_dict)
+
+    setattr(hparams, 'ratio', FLAGS.ratio)
+
+    gen = ScriptedUNet(hparams, sigma_rescale = sigma_rescale).to(FLAGS.device)
+
+    checkpoint = torch.load(FLAGS.model, map_location=FLAGS.device)
+    gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
+
+    # if checkpoint['ema_state_dict'] exists, init ema model and load ema_state_dict
+    if 'ema_state_dict' in checkpoint:
+        ema = ExponentialMovingAverage(gen.parameters(), decay=hparams.ema_momentum)
+        ema.load_state_dict(checkpoint['ema_state_dict'])
+        ema.copy_to()
+        with ema.average_parameters():
+            checkpoint['gen_state_dict'] = gen.state_dict()
+    gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
+    gen.export_to_ts(FLAGS.out)
+
+if __name__ == "__main__":
+    app.run(main)

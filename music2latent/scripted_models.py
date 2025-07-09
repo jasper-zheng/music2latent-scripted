@@ -1,3 +1,5 @@
+# Adapted from https://github.com/SonyCSLParis/music2latent/blob/master/music2latent/models.py
+
 from typing import Tuple
 
 import torch

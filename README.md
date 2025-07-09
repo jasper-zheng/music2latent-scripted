@@ -11,12 +11,36 @@ https://github.com/user-attachments/assets/912aae55-618b-4e69-900c-c8c491dbef24
 
 ## How to export  
 
+Please download the pre-trained Music2Latent model [here](https://huggingface.co/SonyCSLParis/music2latent)   
+Open terminal, clone this repository and cd into the folder:   
+```bash
+git clone https://github.com/jasper-zheng/music2latent-scripted.git
+cd music2latent-scripted
+```
+Run this to export to TorchScript:  
+```bash
+python music2latent/export.py --model path/to/music2latent.pt --out path/to/scripted-m2l.ts
+```
+#### Optional:  
+If you have a music2latent model with customised `config.py`, add it with the `--config` keyword:  
+```bash
+python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --config config.py
+```
+Use `--device` to specify which device (`cpu/mps/cuda`) to test the inference when exporting.  
+```bash
+python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --device mps
+```
+Use `--ratio` keyword to specify the compression ratio from waveform to latents, at the time domain. This need to match your model setting.   
+```bash
+python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --ratio 4096
+```
 
-<!-- 1. Please download the pre-trained Music2Latent model [here](https://huggingface.co/SonyCSLParis/music2latent)   -->
-
-
-will add instruction here later.... see the first 5 cells in [export.ipynb](export.ipynb)
-
+## Important known issues  
+When loading the scripted model in `nn~`:  
+ - We recommend setting the buffer size in `nn~` to something above 8192. `8192` and `16384` are recommended. Buffer size can be set through the third argument in `nn~`:  
+ - <img src='assets/buffersize.jpg' width = '320px'></img>
+ - Once it's loaded and audio starts streaming, it takes ~10s to warm-up, and there'll be some loud noise in the first few seconds, be careful.  
+ - When forward passing sounds that are more sustained, you may hear a constant pulse. This happens because we're not using causal convolution when exporting the model. We've put cached 2d convolution on our to-do list.  
 
 
 ## Latent space tricks  

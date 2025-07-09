@@ -8,3 +8,4 @@ torchaudio
 scipy
 tensorboard
 resampy
+absl-py

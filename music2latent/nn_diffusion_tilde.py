@@ -1,8 +1,9 @@
+# Taken from: https://github.com/acids-ircam/nn_tilde/blob/master/python_tools/module.py
+
 import inspect
 import logging
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
-# import cached_conv as cc
 import torch
 
 TYPE_HASH = {bool: 0, int: 1, float: 2, str: 3, torch.Tensor: 4}

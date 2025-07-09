@@ -43,7 +43,7 @@ class HParams:
     data_channels: int = 2                                                          # channels of input data (real-imaginary STFT requires 2)
     data_length: int = 64                                                           # sequence length of input spectrogram
     data_length_test: int = 256                                                     # sequence length of spectrograms used for testing
-    sample_rate: int = 48000                                                        # sampling rate used to render audio samples (does not matter for training)
+    sample_rate: int = 44100                                                        # sampling rate used to render audio samples (does not matter for training)
     hop: int = 128 * 4                                                              # hop size of STFT
     alpha_rescale: float = 0.65                                                     # alpha rescale parameter for STFT representation
     beta_rescale: float = 0.34                                                      # beta rescale parameter for STFT representation
