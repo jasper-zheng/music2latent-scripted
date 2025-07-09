@@ -71,3 +71,5 @@ Music2Latent:
 M. Pasini, S. Lattner, and G. Fazekas, “Music2Latent: Consistency Autoencoders for Latent Audio Compression”, in Proc. of the 25th Int. Society for Music Information Retrieval Conf., San Francisco, United States, 2024.  
 Original repository: https://github.com/SonyCSLParis/music2latent/  
 
+nn_tilde:  
+https://github.com/acids-ircam/nn_tilde.git
