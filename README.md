@@ -65,3 +65,9 @@ https://github.com/user-attachments/assets/81164bda-b2da-4844-8c55-f057656dad78
  - Adapt to [2d cached-conv](https://github.com/jasper-zheng/cached_conv2d)  
  - smaller music2latent for light-weight inference  
 
+## Acknowledgement  
+
+Music2Latent:  
+M. Pasini, S. Lattner, and G. Fazekas, “Music2Latent: Consistency Autoencoders for Latent Audio Compression”, in Proc. of the 25th Int. Society for Music Information Retrieval Conf., San Francisco, United States, 2024.  
+Original repository: https://github.com/SonyCSLParis/music2latent/  
+
