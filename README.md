@@ -1,6 +1,6 @@
 # Music2Latent-Scripted
 
-Exporting [Music2Latent](https://github.com/SonyCSLParis/music2latent.git) to TorchScript for streamable continuous inference, to be used in [nn~](https://github.com/acids-ircam/nn_tilde.git) in MaxMSP.  
+Exporting [Music2Latent](https://github.com/SonyCSLParis/music2latent.git) to TorchScript for streamable continuous inference, to be used with [nn~](https://github.com/acids-ircam/nn_tilde.git) in MaxMSP/PureDara.  
 
 
 
@@ -35,4 +35,9 @@ https://github.com/user-attachments/assets/81164bda-b2da-4844-8c55-f057656dad78
 
 [Full Video](https://www.youtube.com/watch?v=98geiJ_P-uQ)
 
+
+## To-do  
+ - `export.py`   
+ - Adapt to [2d cached-conv](https://github.com/jasper-zheng/cached_conv2d)  
+ - smaller music2latent for light-weight inference  
 
