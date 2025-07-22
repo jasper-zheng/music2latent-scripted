@@ -27,6 +27,7 @@ class Module(torch.nn.Module):
         output_labels: Optional[Sequence[str]] = None,
         test_method: bool = True,
         test_buffer_size: int = 8192,
+        device: str = 'cpu'
     ):
         """Register a class method as usable by nn~.
 
@@ -52,7 +53,7 @@ class Module(torch.nn.Module):
                 out_channels,
                 out_ratio,
             ]))
-
+        self.to(device)
         if input_labels is None:
             input_labels = [
                 f"(signal) model input {i}" for i in range(in_channels)
@@ -75,7 +76,7 @@ class Module(torch.nn.Module):
 
         if test_method:
             logging.info(f"Testing method {method_name} with nn~ API")
-            x = torch.zeros(1, in_channels, test_buffer_size // in_ratio)
+            x = torch.zeros(1, in_channels, test_buffer_size // in_ratio).to(device)
             y = getattr(self, method_name)(x)
 
             if len(y.shape) != 3:

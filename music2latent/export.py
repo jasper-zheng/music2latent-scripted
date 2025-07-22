@@ -15,11 +15,11 @@ from hparams_inference import *
 from ema import ExponentialMovingAverage
 
 class ScriptedUNet(nn_diffusion_tilde.Module):
-    __constants__ = ['mods']
+    
 
     def __init__(self, hparams, sigma_rescale):
         super(ScriptedUNet, self).__init__()
-        
+        __constants__ = ['mods']
         self.layers_list = hparams.layers_list
         self.reversed_layers_list = list(reversed(hparams.layers_list))
         self.multipliers_list = hparams.multipliers_list
@@ -100,37 +100,11 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.istft_processor = StreamingISTFT(self.hop, 4)
 
         self.batch_size = 1
-        self.max_length = self.downscaling_factor*15
 
-        self.register_buffer('init_noise', torch.randn((self.batch_size, 
-                                                        self.data_channels, 
-                                                        self.hop*2, 
-                                                        self.downscaling_factor*self.max_length)
-                                                        )*self.sigma_max)
-        
-        # sigma = self.sigma_max
-        # sigma = torch.ones((self.batch_size,), dtype=torch.float32)*sigma
-        # sigma_log = torch.log(sigma)/4.
-        # emb_sigma_log = self.emb(sigma_log)
-        # time_emb = self.emb_proj(emb_sigma_log)
-
-        # scale_w_inp = self.scale_inp(emb_sigma_log).reshape(self.batch_size,1,-1,1)
-        # scale_w_out = self.scale_out(emb_sigma_log).reshape(self.batch_size,1,-1,1)
-            
-        # c_skip, c_out, c_in = self.get_c(sigma, self.sigma_correct, self.sigma_data)
-
-        # self.register_buffer('c_skip', c_skip)
-        # self.register_buffer('c_out', c_out)
-        # self.register_buffer('c_in', c_in)
-        # self.register_buffer('sigma_log', sigma_log)
-        # self.register_buffer('emb_sigma_log', emb_sigma_log)
-        # self.register_buffer('time_emb', time_emb)
-        # self.register_buffer('scale_w_inp', scale_w_inp)
-        # self.register_buffer('scale_w_out', scale_w_out)
-        
-        
-        
         self.eval()
+
+        self.to(hparams.device)
+        self.init_time_emb(hparams.device)
 
         self.register_method(
             "forward",
@@ -140,7 +114,8 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             out_ratio=1,
             input_labels=['(signal) Channel %d'%d for d in range(1, 1 + 1)],
             output_labels=['(signal) Channel %d'%d for d in range(1, 1+1)],
-            test_buffer_size = 16384
+            test_buffer_size = 16384,
+            device=hparams.device
         )
         self.register_method(
             "encode",
@@ -153,7 +128,8 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
                 f'(signal) Latent dimension {i + 1}'
                 for i in range(hparams.bottleneck_channels)
             ],
-            test_buffer_size = 16384
+            test_buffer_size = 16384,
+            device=hparams.device
         )
         self.register_method(
             "decode",
@@ -166,8 +142,48 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
                 for i in range(hparams.bottleneck_channels)
             ],
             output_labels=['(signal) Channel %d'%d for d in range(1, 1+1)],
-            test_buffer_size = 16384
+            test_buffer_size = 16384,
+            device=hparams.device
         )
+
+    def init_time_emb(self, device):
+        sigma = self.sigma_max
+        sigma = torch.ones((self.batch_size,), dtype=torch.float32).to(device)*sigma
+        sigma_log = torch.log(sigma)/4.
+        emb_sigma_log = self.emb(sigma_log)
+        time_emb = self.emb_proj(emb_sigma_log)
+
+        scale_w_inp = self.scale_inp(emb_sigma_log).reshape(self.batch_size,1,-1,1)
+        scale_w_out = self.scale_out(emb_sigma_log).reshape(self.batch_size,1,-1,1)
+            
+        c_skip, c_out, c_in = self.get_c(sigma, self.sigma_correct, self.sigma_data)
+
+        self.register_buffer('c_skip', c_skip)
+        self.register_buffer('c_out', c_out)
+        self.register_buffer('c_in', c_in)
+        self.register_buffer('sigma_log', sigma_log)
+        self.register_buffer('emb_sigma_log', emb_sigma_log)
+        self.register_buffer('time_emb', time_emb)
+        self.register_buffer('scale_w_inp', scale_w_inp)
+        self.register_buffer('scale_w_out', scale_w_out)
+
+    @torch.jit.export
+    def warmup(self):
+        """Internal warm-up method to pre-compile kernels"""
+        with torch.no_grad():
+            # Create dummy tensors with expected shapes
+            dummy_wv = torch.randn((1, 1, 16384), device=self.stft_processor.input_buffer.device)
+            dummy_spec = torch.randn((1, self.data_channels, self.hop*2, 32), device=self.stft_processor.input_buffer.device)
+            dummy_latent = torch.randn((1, 64, 8), device=self.stft_processor.input_buffer.device)
+            
+            # Warm up encode path
+            _ = self.encode(dummy_wv)
+            
+            # Warm up decode path  
+            _ = self.decode(dummy_latent)
+            
+            # Warm up full forward path
+            _ = self.forward(dummy_wv)
 
     def get_c(self, sigma, sigma_correct: float, sigma_data: float):
         c_skip = (sigma_data**2.)/(((sigma-sigma_correct)**2.) + (sigma_data**2.))
@@ -176,24 +192,28 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         return c_skip.reshape(-1,1,1,1), c_out.reshape(-1,1,1,1), c_in.reshape(-1,1,1,1)
     
     def forward_generator(self, latents, x):
-
         
         inp = x
         
         # CONDITIONING
+        # sigma = self.sigma_max
+        # sigma = torch.ones((x.shape[0],), dtype=torch.float32).to(x.device)*sigma
+        # sigma_log = torch.log(sigma)/4.
 
-        sigma = self.sigma_max
-        sigma = torch.ones((x.shape[0],), dtype=torch.float32).to(x.device)*sigma
-        sigma_log = torch.log(sigma)/4.
+        # emb_sigma_log = self.emb(sigma_log)
+        # time_emb = self.emb_proj(emb_sigma_log)
+        # print(f'time_emb shape: {time_emb}')
+        # scale_w_inp = self.scale_inp(emb_sigma_log).reshape(x.shape[0],1,-1,1)
+        # scale_w_out = self.scale_out(emb_sigma_log).reshape(x.shape[0],1,-1,1)
+        
+        # c_skip, c_out, c_in = self.get_c(sigma, self.sigma_correct, self.sigma_data)
 
-        # TODO: why this cannot be a buffer??
-        emb_sigma_log = self.emb(sigma_log)
-        time_emb = self.emb_proj(emb_sigma_log)
-
-        scale_w_inp = self.scale_inp(emb_sigma_log).reshape(x.shape[0],1,-1,1)
-        scale_w_out = self.scale_out(emb_sigma_log).reshape(x.shape[0],1,-1,1)
-            
-        c_skip, c_out, c_in = self.get_c(sigma, self.sigma_correct, self.sigma_data)
+        c_skip = self.c_skip
+        c_out = self.c_out
+        c_in = self.c_in
+        scale_w_inp = self.scale_w_inp
+        scale_w_out = self.scale_w_out
+        time_emb = self.time_emb
         
         x = c_in*x
 
@@ -259,11 +279,13 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         with torch.no_grad():
             latent = latent*self.sigma_rescale
             sample_length = int(latent.shape[-1]*self.downscaling_factor)
-            
-            if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
-                self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
+            init_noise = torch.randn((self.batch_size, 
+                                        self.data_channels, 
+                                        self.hop*2, 
+                                        sample_length)
+                                        ).to(latent.device)*self.sigma_max
 
-            decoded_spec = self.forward_generator(latent, self.init_noise[..., :sample_length])
+            decoded_spec = self.forward_generator(latent, init_noise)
             wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec
@@ -281,21 +303,22 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
     @torch.jit.export
     def forward(self, wv):
         assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, channels, sample)"
+        
         with torch.no_grad():
             repr_encoder = self.stft_processor.process_chunk(wv[0])
             latent = self.encoder(repr_encoder)
 
             sample_length = int(latent.shape[-1]*self.downscaling_factor)
+            init_noise = torch.randn((self.batch_size, 
+                                        self.data_channels, 
+                                        self.hop*2, 
+                                        sample_length)
+                                        ).to(latent.device)*self.sigma_max
 
-            if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
-                self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
-
-            decoded_spec = self.forward_generator(latent, self.init_noise[..., :sample_length])
+            decoded_spec = self.forward_generator(latent, init_noise)
             wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec
-    
-
 
 from absl import flags, app
 FLAGS = flags.FLAGS
@@ -345,11 +368,13 @@ def main(argv):
         hparams.update(config_dict)
 
     setattr(hparams, 'ratio', FLAGS.ratio)
+    setattr(hparams, 'device', FLAGS.device)
 
     gen = ScriptedUNet(hparams, sigma_rescale = sigma_rescale).to(FLAGS.device)
 
     checkpoint = torch.load(FLAGS.model, map_location=FLAGS.device)
     gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
+    gen.init_time_emb(FLAGS.device)
 
     # if checkpoint['ema_state_dict'] exists, init ema model and load ema_state_dict
     if 'ema_state_dict' in checkpoint:

@@ -21,7 +21,7 @@ class StreamingSTFT(nn.Module):
     
     # @torch.jit.unused
     def init_buffer(self):
-        self.register_buffer('input_buffer', torch.zeros(self.frame_length - self.hop_size))
+        self.register_buffer('input_buffer', torch.zeros(self.frame_length - self.hop_size).unsqueeze(0))
         self.register_buffer('window', torch.hann_window(self.frame_length))
         self.initialized += 1
 
@@ -193,13 +193,27 @@ def denormalize_realimag(x, alpha_rescale: float = 0.65, beta_rescale: float = 0
     x = x/beta_rescale
     return torch.sign(x)*(x.abs()**(1./alpha_rescale))
 
+# def normalize_complex(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.06):
+#     return beta_rescale*(x.abs()**alpha_rescale).to(torch.complex64)*torch.exp(1j*torch.atan2(x.imag, x.real).to(torch.complex64))
+
+# def denormalize_complex(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.06):
+#     x = x/beta_rescale
+#     return (x.abs()**(1./alpha_rescale)).to(torch.complex64)*torch.exp(1j*torch.atan2(x.imag, x.real).to(torch.complex64))
+
 def normalize_complex(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.06):
-    return beta_rescale*(x.abs()**alpha_rescale).to(torch.complex64)*torch.exp(1j*torch.atan2(x.imag, x.real).to(torch.complex64))
+    magnitude = x.abs()**alpha_rescale
+    phase = torch.angle(x)
+    real_part = beta_rescale * magnitude * torch.cos(phase)
+    imag_part = beta_rescale * magnitude * torch.sin(phase)
+    return torch.complex(real_part, imag_part)
 
 def denormalize_complex(x, alpha_rescale: float = 0.65, beta_rescale: float = 0.06):
     x = x/beta_rescale
-    return (x.abs()**(1./alpha_rescale)).to(torch.complex64)*torch.exp(1j*torch.atan2(x.imag, x.real).to(torch.complex64))
-
+    magnitude = x.abs()**(1./alpha_rescale)
+    phase = torch.angle(x)
+    real_part = magnitude * torch.cos(phase)
+    imag_part = magnitude * torch.sin(phase)
+    return torch.complex(real_part, imag_part)
 
 
 # Streaming versions of audio conversion functions
