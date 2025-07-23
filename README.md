@@ -24,16 +24,20 @@ python music2latent/export.py --model path/to/music2latent.pt --out path/to/scri
 #### Optional:  
 If you have a music2latent model with customised `config.py`, add it with the `--config` keyword:  
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --config config.py
+python music2latent/export.py --model music2latent.pt --config config.py
 ```
 Use `--device` to specify which device (`cpu/mps/cuda`) to test the inference when exporting.  
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --device mps
-```
-Use `--ratio` keyword to specify the compression ratio from waveform to latents, at the time domain. This need to match your model setting.   
+python music2latent/export.py --model music2latent.pt --device mps
+```  
+Use `--ratio` to specify the compression ratio from waveform to latents, at the time domain. This need to match your model setting.   
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --ratio 4096
-```
+python music2latent/export.py --model music2latent.pt --ratio 4096
+```  
+Use `--test` to test the exported model on dummy samples.   
+```bash
+python music2latent/export.py --model music2latent.pt --device cuda --test
+```   
 
 ## Important known issues  
 When loading the scripted model in `nn~`:  

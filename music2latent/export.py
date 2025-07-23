@@ -348,6 +348,10 @@ flags.DEFINE_integer('ratio',
                     help='Compression ratio from waveform to latents, at the time domain',
                     required=False)
 
+flags.DEFINE_bool('test',
+                  default=False,
+                  help='Test the exported model for debugging.')
+
 def main(argv):
     if FLAGS.config is not None:
         spec = importlib.util.spec_from_file_location("config", FLAGS.config)
@@ -384,7 +388,56 @@ def main(argv):
         with ema.average_parameters():
             checkpoint['gen_state_dict'] = gen.state_dict()
     gen.load_state_dict(checkpoint['gen_state_dict'], strict=False)
-    gen.export_to_ts(FLAGS.out)
+    # gen.export_to_ts(FLAGS.out)
+    gen.eval()
+    scripted = torch.jit.script(gen)
+    scripted.save(FLAGS.out)
+
+    # test the exported model:
+    if not FLAGS.test:
+        return
+    
+    import librosa, time
+    scripted.eval()
+    audio_path = librosa.example('trumpet')
+    wv, sr = librosa.load(audio_path, sr=44100)
+    print(f'original waveform samples: {len(wv)}')
+    wv = torch.tensor(wv, device=FLAGS.device).unsqueeze(0)[:,:294912]
+    wv_chunks = [wv[:, i*16384:(i+1)*16384] for i in range(18)]
+    print(f'waveform samples: {wv.shape}')
+    print(f'number of chunks: {len(wv_chunks)}')
+    print(f'chunk length: {wv_chunks[0].shape}')
+
+    print(f'Running encoder, test device: {FLAGS.device}')
+    ## Run audio chunks to the encoder
+    latent_chunks = []
+    with torch.no_grad():
+        for i, w in enumerate(wv_chunks):
+            torch.cuda.synchronize()
+            start_time = time.perf_counter()
+
+            latent = scripted.encode(w.unsqueeze(0))
+            torch.cuda.synchronize()  
+
+            end_time = time.perf_counter()
+            print(f'Encoder execution time (chunk {i+1}/{len(wv_chunks)}): {end_time - start_time:.2f} seconds')
+            latent_chunks.append(latent)
+
+    print(f'Running decoder, test device: {FLAGS.device}')
+    ## Run audio chunks to the decoder
+    wv_recons = []
+    with torch.no_grad():
+        for i, latent in enumerate(latent_chunks):
+            torch.cuda.synchronize()
+            start_time = time.perf_counter()
+
+            wv_recon = scripted.decode(latent)
+
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
+            print(f'Decoder execution time (chunk {i+1}/{len(latent_chunks)}): {end_time - start_time:.2f} seconds')
+
+            wv_recons.append(wv_recon)
 
 if __name__ == "__main__":
     app.run(main)
