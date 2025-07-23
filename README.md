@@ -43,7 +43,7 @@ python music2latent/export.py --model music2latent.pt --device cuda --test
 When loading the scripted model in `nn~`:  
  - We recommend setting the buffer size in `nn~` to something above 8192. `8192` and `16384` are recommended. Buffer size can be set through the third argument in `nn~`:  
  - <img src='assets/buffersize.jpg' width = '320px'></img>
- - Once it's loaded and audio starts streaming, it takes ~10s to warm-up, and there'll be some loud noise in the first few seconds, be careful.  
+ - Once it's loaded and audio starts streaming, it takes ~10s to warm-up (on Windows it can go up to 90 seconds), and there'll be some loud noise in the first few seconds, be careful. This is due to TorchScript's gpu [warmup optimizations](https://github.com/pytorch/pytorch/issues/57894).    
  - When forward passing sounds that are more sustained, you may hear a constant pulse. This happens because we're not using causal convolution when exporting the model. We've put cached 2d convolution on our to-do list.  
 
 
