@@ -7,7 +7,7 @@ Exporting [Music2Latent](https://github.com/SonyCSLParis/music2latent.git) to To
 https://github.com/user-attachments/assets/912aae55-618b-4e69-900c-c8c491dbef24
 
 
-
+> Thanks [moiseshorta](https://github.com/moiseshorta) for adding the `forward-test.py` for multiple forward passes test, as well as testing the `scripted-cuda` branch for exporting with NVIDIA GPUs.
 
 ## How to export  
 
@@ -55,9 +55,14 @@ https://github.com/user-attachments/assets/1db70fbe-af01-4f19-ba40-6e1e082c2e8d
 
 ### Latent space walk with latent terrain (2D Granular Synthesis)  
 
-https://github.com/user-attachments/assets/81164bda-b2da-4844-8c55-f057656dad78
 
-[Full Video](https://www.youtube.com/watch?v=98geiJ_P-uQ)
+
+
+https://github.com/user-attachments/assets/7ad55f10-cd7b-4501-add9-103ed15768a3
+
+
+
+
 
 
 ## To-do  
