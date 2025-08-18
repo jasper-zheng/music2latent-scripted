@@ -1,3 +1,5 @@
+> Thanks [moiseshorta](https://github.com/moiseshorta) for adding the `forward-test.py` for multiple forward passes test, as well as testing the `scripted-cuda` branch for exporting with NVIDIA GPUs.
+
 # Music2Latent-Scripted
 
 Exporting [Music2Latent](https://github.com/SonyCSLParis/music2latent.git) to TorchScript for streamable continuous inference, to be used with [nn~](https://github.com/acids-ircam/nn_tilde.git) in MaxMSP/PureDara.  
@@ -7,7 +9,7 @@ Exporting [Music2Latent](https://github.com/SonyCSLParis/music2latent.git) to To
 https://github.com/user-attachments/assets/912aae55-618b-4e69-900c-c8c491dbef24
 
 
-> Thanks [moiseshorta](https://github.com/moiseshorta) for adding the `forward-test.py` for multiple forward passes test, as well as testing the `scripted-cuda` branch for exporting with NVIDIA GPUs.
+
 
 ## How to export  
 
