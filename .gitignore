@@ -172,3 +172,5 @@ checkpoints/
 audio_samples/
 
 export.ipynb
+
+.vscode
