@@ -99,7 +99,7 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         self.stft_processor = StreamingSTFT(self.hop, 4)
         self.istft_processor = StreamingISTFT(self.hop, 4)
 
-        self.batch_size = 1
+        self.batch_size = hparams.out_channels
         self.max_length = self.downscaling_factor*15
 
         self.register_buffer('init_noise', torch.randn((self.batch_size, 
@@ -136,10 +136,10 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             "forward",
             in_channels=1,
             in_ratio=1,
-            out_channels=1,
+            out_channels=hparams.out_channels,
             out_ratio=1,
             input_labels=['(signal) Channel %d'%d for d in range(1, 1 + 1)],
-            output_labels=['(signal) Channel %d'%d for d in range(1, 1+1)],
+            output_labels=['(signal) Channel %d'%d for d in range(1, 1+hparams.out_channels)],
             test_buffer_size = 16384
         )
         self.register_method(
@@ -159,13 +159,13 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
             "decode",
             in_channels=hparams.bottleneck_channels,
             in_ratio=hparams.ratio,
-            out_channels=1,
+            out_channels=hparams.out_channels,
             out_ratio=1,
             input_labels=[
                 f'(signal) Latent dimension {i+1}'
                 for i in range(hparams.bottleneck_channels)
             ],
-            output_labels=['(signal) Channel %d'%d for d in range(1, 1+1)],
+            output_labels=['(signal) Channel %d'%d for d in range(1, 1+hparams.out_channels)],
             test_buffer_size = 16384
         )
 
@@ -176,8 +176,6 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         return c_skip.reshape(-1,1,1,1), c_out.reshape(-1,1,1,1), c_in.reshape(-1,1,1,1)
     
     def forward_generator(self, latents, x):
-
-        
         inp = x
         
         # CONDITIONING
@@ -197,8 +195,8 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         
         x = c_in*x
 
-        if latents.shape == x.shape:
-            latents = self.encoder(latents)
+        # if latents.shape == x.shape:
+        #     latents = self.encoder(latents)
 
         # if pyramid_latents is None:
         pyramid_latents = self.decoder(latents)
@@ -254,29 +252,36 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
         return out
     
     @torch.jit.export
+    def encode(self, wv):
+        assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, audio_channels, sample)"
+        with torch.no_grad():
+            repr_encoder = self.stft_processor.process_chunk(wv[0]) # (batch_size, data_channels, freq, time)
+            latent = self.encoder(repr_encoder)
+            latent = latent/self.sigma_rescale
+        assert latent.dim() == 3, "Output should be a 3D tensor (batch_size, latent_dim, sample)"
+        return latent
+    
+    @torch.jit.export
     def decode(self, latent):
         assert latent.dim() == 3, "Input should be a 3D tensor (batch_size, latent_dim, sample)"
         with torch.no_grad():
             latent = latent*self.sigma_rescale
             sample_length = int(latent.shape[-1]*self.downscaling_factor)
             
-            if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
-                self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
+            # if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
+            #     # self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
+            #     print(f'noise size {self.init_noise.shape}')
+            #     self.init_noise = torch.randn((latent.shape[0], 
+            #                                     self.data_channels, 
+            #                                     self.hop*2, 
+            #                                     self.downscaling_factor*self.max_length)
+            #                                     )*self.sigma_max
+            #     print(f'resized noise to {self.init_noise.shape}')
 
-            decoded_spec = self.forward_generator(latent, self.init_noise[..., :sample_length])
+            decoded_spec = self.forward_generator(latent, self.init_noise[..., :sample_length]) # (batch_size, data_channels, freq, time)
             wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
         assert wv_rec.dim() == 3, "Output should be a 3D tensor (batch_size, channels, sample)"
         return wv_rec
-    
-    @torch.jit.export
-    def encode(self, wv):
-        assert wv.dim() == 3, "Input should be a 3D tensor (batch_size, channels, sample)"
-        with torch.no_grad():
-            repr_encoder = self.stft_processor.process_chunk(wv[0])
-            latent = self.encoder(repr_encoder)
-            latent = latent/self.sigma_rescale
-        assert latent.dim() == 3, "Output should be a 3D tensor (batch_size, latent_dim, sample)"
-        return latent
     
     @torch.jit.export
     def forward(self, wv):
@@ -287,8 +292,8 @@ class ScriptedUNet(nn_diffusion_tilde.Module):
 
             sample_length = int(latent.shape[-1]*self.downscaling_factor)
 
-            if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
-                self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
+            # if self.init_noise.numel() > 0 and self.init_noise.shape[0] != latent.shape[0]:
+            #     self.init_noise = self.init_noise.expand(latent.shape[0], -1).contiguous()
 
             decoded_spec = self.forward_generator(latent, self.init_noise[..., :sample_length])
             wv_rec = self.istft_processor.process_chunk(decoded_spec).unsqueeze(0)
@@ -325,10 +330,19 @@ flags.DEFINE_integer('ratio',
                     help='Compression ratio from waveform to latents, at the time domain',
                     required=False)
 
+flags.DEFINE_integer('out_channels',
+                    default=1,
+                    help='Number of output audio channels for the decoder',
+                    required=False)
+
 def main(argv):
     if FLAGS.config is not None:
         spec = importlib.util.spec_from_file_location("config", FLAGS.config)
+        if spec is None:
+            raise ImportError(f"Could not load spec from {FLAGS.config}")
         config_module = importlib.util.module_from_spec(spec)
+        if spec.loader is None:
+            raise ImportError(f"Could not load loader for spec from {FLAGS.config}")
         spec.loader.exec_module(config_module)
 
         config_dict = {
@@ -345,6 +359,7 @@ def main(argv):
         hparams.update(config_dict)
 
     setattr(hparams, 'ratio', FLAGS.ratio)
+    setattr(hparams, 'out_channels', FLAGS.out_channels)
 
     gen = ScriptedUNet(hparams, sigma_rescale = sigma_rescale).to(FLAGS.device)
 

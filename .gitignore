@@ -170,3 +170,5 @@ tmp/
 fad_stats/
 checkpoints/
 audio_samples/
+
+export.ipynb

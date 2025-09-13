@@ -527,6 +527,8 @@ class ScriptedDecoder(nn.Module):
             
         self.up_layers = nn.ModuleList(up_layers)
 
+        self.expand_dim = hparams.out_channels
+
 
     def forward(self, x):
         x = self.conv_inp(x)
@@ -546,7 +548,9 @@ class ScriptedDecoder(nn.Module):
             l = l + 1
             if k < len(self.layers_list):
                 if l == 1:
-                    pyramid_list.append(x)
+                    # pyramid_list.append(x)
+                    pyramid_list.append(x.expand(self.expand_dim, -1, -1, -1))
+                    # print(f'Appending layer with shape {x.shape} to pyramid list')
                 if l == self.layers_list[k] + 1:
                     k = k + 1
                     l = 0

@@ -33,11 +33,11 @@ class StreamingSTFT(nn.Module):
             chunk: Input audio chunk [batch_size, samples]
             
         Returns:
-            STFT frames [batch_size, freq_bins, time_frames]
+            STFT frames [batch_size, data_channel, freq_bins, time_frames]
         """
         # if not self.initialized:
         #     self.init_buffer(chunk)
-
+        
         batch_size = chunk.shape[0]
         
         # Expand buffer to match batch size if needed
@@ -95,7 +95,6 @@ class StreamingISTFT(nn.Module):
         window = torch.hann_window(self.frame_length)
         inv_window = inverse_stft_window(window, self.frame_length, self.hop_size)
         self.register_buffer('inv_window', inv_window)
-        self.register_buffer
         self.initialized += 1
     
     def process_chunk(self, stft_frames: torch.Tensor) -> torch.Tensor:
@@ -103,7 +102,7 @@ class StreamingISTFT(nn.Module):
         Process STFT frames back to audio with overlap-add
         
         Args:
-            stft_frames: STFT frames [batch_size, freq_bins, time_frames]
+            stft_frames: STFT frames [batch_size, data_channel, freq_bins, time_frames]
             
         Returns:
             Audio chunk [batch_size, samples]
