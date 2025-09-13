@@ -26,15 +26,19 @@ python music2latent/export.py --model path/to/music2latent.pt --out path/to/scri
 #### Optional:  
 If you have a music2latent model with customised `config.py`, add it with the `--config` keyword:  
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --config config.py
+python music2latent/export.py --model music2latent.pt --config config.py
 ```
 Use `--device` to specify which device (`cpu/mps/cuda`) to test the inference when exporting.  
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --device mps
+python music2latent/export.py --model music2latent.pt --device mps
 ```
 Use `--ratio` keyword to specify the compression ratio from waveform to latents, at the time domain. This need to match your model setting.   
 ```bash
-python music2latent/export.py --model music2latent.pt --out scripted-m2l.ts --ratio 4096
+python music2latent/export.py --model music2latent.pt --ratio 4096
+```
+Use `--outchannels` keyword to define the number of audio channels of decoder (a stereo decoder still takes mono audio/latent inputs, but it starts from stereo noise for diffusion).   
+```bash
+python music2latent/export.py --model music2latent.pt --outchannels 2
 ```
 
 ## Important known issues  

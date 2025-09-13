@@ -330,7 +330,7 @@ flags.DEFINE_integer('ratio',
                     help='Compression ratio from waveform to latents, at the time domain',
                     required=False)
 
-flags.DEFINE_integer('out_channels',
+flags.DEFINE_integer('outchannels',
                     default=1,
                     help='Number of output audio channels for the decoder',
                     required=False)
